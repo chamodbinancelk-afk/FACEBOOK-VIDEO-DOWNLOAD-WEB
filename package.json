@@ -1,19 +1,15 @@
 {
-  "name": "cf-news-telegram-bot",
+  "name": "fdown-telegram-bot",
   "version": "1.0.0",
-  "description": "Telegram News Publisher Bot running on Cloudflare Workers",
+  "description": "Telegram Bot to download videos using fdown.net",
   "main": "index.js",
-  "type": "module",
   "scripts": {
-    "deploy": "wrangler deploy",
-    "start": "wrangler dev"
+    "start": "node index.js"
   },
   "dependencies": {
-    "telegraf": "^4.16.0",
+    "axios": "^1.6.8",
     "cheerio": "^1.0.0-rc.12",
-    "moment-timezone": "^0.5.45"
-  },
-  "devDependencies": {
-    "wrangler": "^4.43.0"
+    "dotenv": "^16.4.5",
+    "telegraf": "^4.16.1"
   }
 }
