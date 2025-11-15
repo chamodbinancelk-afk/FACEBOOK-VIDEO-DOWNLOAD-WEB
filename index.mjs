@@ -1,14 +1,13 @@
 // --- 1. Variables and Constants (ටෝකන සහ URL) ---
 
-// ********* මෙහි ඔබගේ සැබෑ ටෝකන ඇතුළත් කර ඇත *********
+// ********* ඔබගේ සැබෑ ටෝකන සහ Secret *********
 const BOT_TOKEN = "8382727460:AAEgKVISJN5TTuV4O-82sMGQDG3khwjiKR8"; 
 const WEBHOOK_SECRET = "ec6bc090856641e9b2aca785d7a34727"; 
-// ********************************************************
+// ***********************************************
 
 const TELEGRAM_API = "https://api.telegram.org/bot";
 
-// ⚠️ වැදගත්: මෙය 'Fdown' වැනි සේවාවක API එකක ව්‍යුහයට සමාන උපකල්පිත URL එකකි.
-// ඔබ අන්තර්ජාලයෙන් සොයාගන්නා සැබෑ, සක්‍රීය API එක මෙහි ආදේශ කළ යුතුය.
+// ⚠️ වැදගත්: මෙය උපකල්පිත API එකකි. Bot එක ක්‍රියා නොකරන්නේ නම්, මෙය අක්‍රීයයි.
 const FB_API_URL = "https://api.some-fb-downloader.com/get_video?url="; 
 
 // --- 2. Telegram API Interaction (Telegram API අන්තර්ක්‍රියා) ---
@@ -45,28 +44,28 @@ async function sendVideoFromUrl(chat_id, video_url, quality) {
 
 // --- 3. Facebook Video Downloader Logic (වීඩියෝ බාගත කිරීමේ තර්කය) ---
 
-/**
- * Facebook URL එකකින් බාගත කිරීමේ සබැඳි ලබා ගනී.
- * ⚠️ මෙම ශ්‍රිතය ඔබගේ නව API එකේ JSON ප්‍රතිචාරයට අනුව සකස් කළ යුතුය.
- */
 async function getFbVideoLinks(videoUrl) {
     try {
         const apiResponse = await fetch(`${FB_API_URL}${encodeURIComponent(videoUrl)}`);
         
         if (!apiResponse.ok) {
+            // Log 1: API එකෙන් 200 OK හැර වෙනත් තත්ත්ව කේතයක් ලැබුණහොත්
             console.error(`API response status: ${apiResponse.status}`);
             return null;
         }
         
         const data = await apiResponse.json(); 
+        
+        // Log 2: API එකෙන් ලැබෙන සම්පූර්ණ JSON ප්‍රතිචාරය සටහන් කිරීම
+        console.log("API Full Response Data:", data); 
 
-        // අපි උපකල්පනය කරන්නේ API ප්‍රතිචාරය පහත ව්‍යුහය දරන බවයි:
+        // අපි උපකල්පනය කරන API ප්‍රතිචාර ව්‍යුහය පරීක්ෂා කිරීම:
         // { "status": "ok", "links": [ { "quality": "HD", "url": "..." }, { "quality": "SD", "url": "..." } ] }
         if (data && data.status === 'ok' && Array.isArray(data.links)) {
             
-            // HD සබැඳිය සෙවීම (720p හෝ HD)
+            // HD සබැඳිය සෙවීම
             const hdLink = data.links.find(link => link.quality && (link.quality.toUpperCase() === 'HD' || link.quality.includes('720p')) && link.url)?.url;
-            // SD සබැඳිය සෙවීම (360p හෝ SD)
+            // SD සබැඳිය සෙවීම
             const sdLink = data.links.find(link => link.quality && (link.quality.toUpperCase() === 'SD' || link.quality.includes('360p')) && link.url)?.url;
 
             return {
@@ -75,10 +74,12 @@ async function getFbVideoLinks(videoUrl) {
             };
         }
         
+        // Log 3: JSON ලැබුණත් ව්‍යුහය නොගැලපේ නම්
         console.error("API response structure unexpected or links not found:", data);
         return null; 
 
     } catch (error) {
+        // Log 4: Fetch කිරීමේ දෝෂ (උදා: ජාල සම්බන්ධතා දෝෂ)
         console.error("Facebook API fetch error:", error);
         return null;
     }
