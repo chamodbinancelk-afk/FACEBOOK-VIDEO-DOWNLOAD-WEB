@@ -1,8 +1,10 @@
 name = "fdown-telegram-bot"
-main = "index.mjs" # හෝ ඔබේ entry file එක
-compatibility_date = "2025-011-01" # වත්මන් දිනයට ආසන්න දිනයක් යොදන්න.
+main = "index.js" 
+compatibility_date = "2025-11-01" 
 
-# ⚠️ මේක තමයි ප්‍රධාන වෙනස!
+# ⚠️ Service Worker එකක් ලෙස නොසලකා ES Module එකක් ලෙස සැලකීමට
+type = "module" 
+
 compatibility_flags = [
     "nodejs_compat" 
 ]
