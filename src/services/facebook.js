@@ -36,6 +36,7 @@ export async function getFbVideoInfo(videoUrl, env) {
   
   // Fallback: Free scraping APIs with improved handling
   const apis = [
+    { name: 'FBDownloaderAPI', handler: tryFBDownloaderAPI },
     { name: 'SnapSave', handler: trySnapSaveAPI },
     { name: 'FBDown', handler: tryFBDownAPI },
     { name: 'FDown', handler: tryFDownAPI },
@@ -105,7 +106,41 @@ async function tryRapidAPI(videoUrl, apiKey, signal) {
 }
 
 /**
- * Fallback 1: SnapSave API
+ * Fallback 1: FBDownloader Free API (Working as of 2025)
+ */
+async function tryFBDownloaderAPI(videoUrl, signal) {
+  const apiUrl = `https://facebookdownloader.onrender.com/search?url=${encodeURIComponent(videoUrl)}`;
+  
+  const response = await fetch(apiUrl, {
+    method: 'GET',
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'Accept': 'application/json'
+    },
+    signal
+  });
+  
+  if (!response.ok) {
+    throw new Error(`FBDownloaderAPI failed: ${response.status}`);
+  }
+  
+  const data = await response.json();
+  
+  if (data && (data.hd || data.sd)) {
+    return {
+      url: videoUrl,
+      hd: data.hd || null,
+      sd: data.sd || data.hd || null,
+      title: data.title || 'Facebook Video',
+      thumbnail: data.thumbnail || ''
+    };
+  }
+  
+  throw new Error('No video URLs found in FBDownloaderAPI response');
+}
+
+/**
+ * Fallback 2: SnapSave API
  */
 async function trySnapSaveAPI(videoUrl, signal) {
   const apiUrl = 'https://snapsave.app/action.php?lang=vn';
@@ -152,7 +187,7 @@ async function trySnapSaveAPI(videoUrl, signal) {
 }
 
 /**
- * Fallback 2: FBDown.org API
+ * Fallback 3: FBDown.org API
  */
 async function tryFBDownAPI(videoUrl, signal) {
   const apiUrl = 'https://fbdown.org/download.php';
@@ -194,7 +229,7 @@ async function tryFBDownAPI(videoUrl, signal) {
 }
 
 /**
- * Fallback 3: FDown.net API
+ * Fallback 4: FDown.net API
  */
 async function tryFDownAPI(videoUrl, signal) {
   const apiUrl = 'https://www.fdown.net/download.php';
@@ -259,7 +294,7 @@ async function tryFDownAPI(videoUrl, signal) {
 }
 
 /**
- * Fallback 4: Direct extraction (last resort)
+ * Fallback 5: Direct extraction (last resort)
  */
 async function tryDirectMethod(videoUrl, signal) {
   // Try to fetch the Facebook page directly
