@@ -20,6 +20,7 @@ wheels/
 *.egg
 
 .env
+.env.local
 *.log
 last_headline.txt
 
@@ -27,3 +28,27 @@ venv/
 ENV/
 env/
 .venv
+
+# Node.js
+node_modules/
+package-lock.json
+npm-debug.log*
+
+# Cloudflare Workers
+.wrangler/
+wrangler.toml.local
+.dev.vars
+
+# Logs
+/tmp/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
