@@ -5,7 +5,7 @@ import * as cheerio from 'cheerio'; 
 
 // ⚠️ Bot Token එක
 // සටහන: ඔබේ Token එකේ 401 Error එකක් තිබිය හැක. නිවැරදි Token එක මෙහි ඇතුළත් කරන්න.
-const BOT_TOKEN = '83827277460:AAEgKVISJN5TTuV4O-82sMGQDG3khwjiKR8'; 
+const BOT_TOKEN = '8382727460:AAEgKVISJN5TTuV4O-82sMGQDG3khwjiKR8'; 
 
 let bot;
 
