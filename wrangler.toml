@@ -1,19 +1,8 @@
 name = "facebookdownbot"
-# ඔබගේ build script එක මඟින් නිපදවන ප්‍රධාන ගොනුවට යොමු කෙරේ.
 main = "dist/worker.js" 
-
-# Cloudflare Workers සඳහා අවශ්‍ය වන අනුකූලතා දිනය (Compatibility Date). 
-# මෙය නවතම දිනයකට සකසන්න.
 compatibility_date = "2024-11-18" 
 compatibility_flags = ["nodejs_compat"]
 
 [build]
-# ඔබගේ package.json හි ඇති "build" script එක ක්‍රියාත්මක කිරීම. 
-# ඔබගේ ලොග් වල "bun" තිබූ බැවින් "bun run build" භාවිතා කළ හැක.
 command = "bun run build"
-watch_dir = "src" # src ෆෝල්ඩරයේ වෙනස්කම් නිරීක්ෂණය කරයි
-
-# [vars]
-# ඔබට මෙහි යතුර (key) ලෙස නොතැබිය යුතු පරිසර විචල්‍යයන් (environment variables) සඳහන් කළ හැක.
-# උදා: BOT_TOKEN යනු ආරක්ෂිත රහසක් (Secret) ලෙස Cloudflare 
-# Dashboard එකේ තැබිය යුතුය.
+watch_dir = "src"
