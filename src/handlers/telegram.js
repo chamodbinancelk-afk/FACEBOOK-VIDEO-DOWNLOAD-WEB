@@ -3,6 +3,7 @@ import { getFbVideoInfo } from '../services/facebook.js';
 export function registerHandlers(bot, env) {
   // Store env in bot for access in handlers
   bot.env = env;
+  
   // Start command
   bot.command('start', async (ctx) => {
     await ctx.reply(
@@ -54,40 +55,39 @@ export function registerHandlers(bot, env) {
         return;
       }
       
-      if (result.hd) {
+      const videoUrl = result.hd || result.sd || result.url;
+      
+      if (videoUrl) {
         try {
-          await ctx.replyWithVideo(result.hd, { 
-            caption: '✅ Facebook වීඩියෝව බාගත කරන ලදී! (HD)' 
+          const quality = result.hd ? 'HD' : 'SD';
+          await ctx.replyWithVideo(videoUrl, { 
+            caption: `✅ Facebook වීඩියෝව බාගත කරන ලදී! (${quality})`,
+            supports_streaming: true,
+            width: 1280,
+            height: 720
           });
         } catch (error) {
-          console.error('Error sending HD video:', error.message);
-          if (result.sd) {
-            try {
-              await ctx.replyWithVideo(result.sd, { 
-                caption: '✅ Facebook වීඩියෝව බාගත කරන ලදී! (SD)\n⚠️ HD ප්‍රමාණය ඉතා විශාල නිසා SD යැවීය.' 
-              });
-            } catch (sdError) {
-              console.error('Error sending SD video:', sdError.message);
-              await ctx.reply(`❌ වීඩියෝව යැවීමට නොහැකි විය. වීඩියෝ ප්‍රමාණය ඉතා විශාල විය හැක.\n\n📎 Download Link:\n${result.sd}`);
-            }
-          } else {
-            await ctx.reply("❌ වීඩියෝව යැවීමට නොහැකි විය. වීඩියෝ ප්‍රමාණය ඉතා විශාල විය හැක.");
+          console.error('Error sending video:', error.message);
+          
+          try {
+            await ctx.replyWithDocument(videoUrl, { 
+              caption: '✅ වීඩියෝව ලැබී ඇත!\n\n⚠️ Telegram හරහා සෘජුව play කිරීමට නොහැකි විය. File ලෙස download කරගන්න.',
+              filename: 'facebook_video.mp4'
+            });
+          } catch (docError) {
+            console.error('Error sending as document:', docError.message);
+            await ctx.reply(
+              `❌ වීඩියෝව යැවීමට නොහැකි විය.\n\n` +
+              `📎 කරුණාකර මෙම සබැඳිය භාවිතයෙන් download කරන්න:\n${videoUrl}`
+            );
           }
-        }
-      } else if (result.sd) {
-        try {
-          await ctx.replyWithVideo(result.sd, { 
-            caption: '✅ Facebook වීඩියෝව බාගත කරන ලදී! (SD)' 
-          });
-        } catch (error) {
-          console.error('Error sending SD video:', error.message);
-          await ctx.reply(`❌ වීඩියෝව යැවීමට නොහැකි විය. වීඩියෝ ප්‍රමාණය ඉතා විශාල විය හැක.\n\n📎 Download Link:\n${result.sd}`);
         }
       } else {
         await ctx.reply("❌ වීඩියෝ සබැඳිය ලබා ගැනීමට නොහැකි විය. සබැඳිය නිවැරදි දැයි පරීක්ෂා කරන්න.");
       }
     } catch (error) {
       console.error('Facebook video fetch error:', error);
+      // වීඩියෝ තොරතුරු ලබා ගැනීමේදී ඇතිවන දෝෂය හසුකර ගනී
       await ctx.reply(`❌ දෝෂයක් සිදු විය: ${error.message}`);
     }
   });
