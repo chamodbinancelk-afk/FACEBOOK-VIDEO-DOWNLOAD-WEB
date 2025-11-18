@@ -2,7 +2,7 @@
  * src/index.js
  * Cloudflare Worker Telegram Bot Code (Facebook Video Downloader via fdown.net scraping)
  *
- * ඔබගේ Bot Token එක Cloudflare Worker Settings වලදී Environment Variable එකක් ලෙස BOT_TOKEN නමින් ලබා දී තිබිය යුතුය.
+ * සටහන: Bot Token එක Cloudflare Worker Settings වලදී Environment Variable එකක් ලෙස BOT_TOKEN නමින් ලබා දී තිබිය යුතුය.
  */
 
 export default {
@@ -32,7 +32,7 @@ export default {
                     return new Response('OK', { status: 200 });
                 }
 
-                // 1. Link එකක් දැයි පරීක්ෂා කිරීම (http/https වලින් පටන් ගත්තදැයි බැලීම)
+                // 1. Link එකක් දැයි පරීක්ෂා කිරීම
                 const isLink = /^https?:\/\//i.test(text);
                 
                 if (isLink) {
@@ -59,20 +59,38 @@ export default {
 
                         const resultHtml = await fdownResponse.text();
 
-                        // 3. HTML ප්‍රතිචාරයෙන් HD Video Link එක Scrap කිරීම (RegEx භාවිතා කර)
-                        const hdLinkRegex = /<a href="([^"]+)" target="_blank" class="btn btn-success btn-lg" rel="nofollow">Download Video in HD Quality<\/a>/i;
-                        const match = resultHtml.match(hdLinkRegex);
+                        // 3. HTML ප්‍රතිචාරයෙන් HD සහ Normal Video Links Scrap කිරීම
                         
+                        let videoUrl = null;
+
+                        // HD Link එක සොයන ලිහිල් කළ RegEx එක: (Quotes සහ Spacings ලිහිල් කර ඇත)
+                        // 'btn-success' class එක සහ 'HD Quality' text එක සොයයි.
+                        const hdLinkRegex = /<a[^>]+href=["']?([^"'\s]+)["']?[^>]*class=["']?[^"']*btn-success[^"']*[rR]el=["']?nofollow["']?[^>]*>Download Video in HD Quality<\/a>/i;
+                        let match = resultHtml.match(hdLinkRegex);
+
                         if (match && match[1]) {
-                            const hdVideoUrl = match[1];
-                            console.log(`[SUCCESS] HD Link found: ${hdVideoUrl}`);
+                            videoUrl = match[1]; // HD Link එක
+                        } else {
+                            // Normal Quality Link එකක් සොයන ලිහිල් කළ RegEx එක: (Fallback)
+                            // 'btn-default' class එක සහ 'Normal Quality' text එක සොයයි.
+                            const normalLinkRegex = /<a[^>]+href=["']?([^"'\s]+)["']?[^>]*class=["']?[^"']*btn-default[^"']*[rR]el=["']?nofollow["']?[^>]*>Download Video in Normal Quality<\/a>/i;
+                            match = resultHtml.match(normalLinkRegex);
+
+                            if (match && match[1]) {
+                                videoUrl = match[1]; // Normal Link එක
+                            }
+                        }
+
+                        if (videoUrl) {
+                            const quality = hdLinkRegex.test(resultHtml) ? "HD" : "Normal";
+                            console.log(`[SUCCESS] Video Link found (${quality}): ${videoUrl}`);
                             
                             // 4. Telegram වෙත වීඩියෝව යැවීම (sendVideo)
-                            await this.sendVideo(telegramApi, chatId, hdVideoUrl, 'මෙන්න ඔබගේ වීඩියෝව! HD Quality එකෙන් download කර ඇත.', messageId);
+                            await this.sendVideo(telegramApi, chatId, videoUrl, `මෙන්න ඔබගේ වීඩියෝව! ${quality} Quality එකෙන් download කර ඇත.`, messageId);
                             
                         } else {
-                            // HD Link එක සොයා ගැනීමට නොහැකි නම්, HTML ප්‍රතිචාරයේ කොටසක් Log එකට යවමු.
-                            console.error(`[SCRAPING FAILED] No HD link found for ${text}. HTML response start: ${resultHtml.substring(0, 500)}`);
+                            // HD හෝ Normal Link එක සොයා ගැනීමට නොහැකි නම්, HTML ප්‍රතිචාරයේ කොටසක් Log එකට යවමු.
+                            console.error(`[SCRAPING FAILED] No HD/Normal link found for ${text}. HTML response start: ${resultHtml.substring(0, 500)}`);
                             
                             await this.sendMessage(telegramApi, chatId, '⚠️ සමාවෙන්න, වීඩියෝ Download Link එක සොයා ගැනීමට නොහැකි විය. වීඩියෝව Private (පුද්ගලික) විය හැක.', messageId);
                         }
