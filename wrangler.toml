@@ -9,3 +9,5 @@ watch_dir = "src"
 
 [observability]
 enabled = true
+
+timeout = 30
