@@ -1,8 +1,29 @@
 /**
  * src/index.js
  * Cloudflare Worker Telegram Bot Code (Facebook Video Downloader via fdown.net scraping)
- * ** විශේෂාංග: Improved Scraping for Title/Stats (V3), HD/Normal Download, Blob Stream Upload, Caption Length Limit Fix.
+ * ** විශේෂාංග: Improved Scraping for Title/Stats (V4), HD/Normal Download, Blob Stream Upload, Caption Length Limit Fix, Markdown/HTML Sanitization.
  */
+
+// Function to clean text (removes HTML tags and escapes potential Markdown characters)
+function sanitizeText(text) {
+    if (!text) return "";
+    // 1. HTML tags ඉවත් කිරීම
+    let cleaned = text.replace(/<[^>]*>/g, '').trim(); 
+    // 2. බහු spaces තනි space එකක් බවට පත් කිරීම
+    cleaned = cleaned.replace(/\s\s+/g, ' '); 
+    // 3. HTML entities විකේතනය කිරීම
+    cleaned = cleaned.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'); 
+
+    // 4. Markdown V2 (Telegram) formatting අක්ෂර escape කිරීම (Caption එකේ Markdown භාවිතා කරන නිසා)
+    // **, * , [ , ] , ( , ) , ~ , ` , > , # , + , - , = , | , { , } , . , !
+    // Title එකේ හෝ Stats වල ඇති අනවශ්‍ය formatting ඉවත් කරයි.
+    cleaned = cleaned.replace(/([_*\[\]()~`>#+\-=|{}.!])/g, '\\$1');
+
+    // **සටහන: Title එක bold කිරීමට ඇති නිසා, අපි මේ අවස්ථාවේ Title එකේ ඇති * අක්ෂර පමණක් escape නොකර ඉතිරි අක්ෂර escape කරමු.**
+    // කෙසේ වෙතත්, සම්පූර්ණ පිරිසිදු කිරීම සඳහා, ඉහත කේතය වඩා ආරක්ෂිතයි.
+    return cleaned;
+}
+
 
 export default {
     async fetch(request, env, ctx) {
@@ -54,7 +75,7 @@ export default {
 
                         const resultHtml = await fdownResponse.text();
                         
-                        // ** 2. Thumbnail, Title සහ Stats Scrap කිරීම (Improved RegEx V3) **
+                        // ** 2. Thumbnail, Title සහ Stats Scrap කිරීම (Improved RegEx V4) **
                         let videoUrl = null;
                         let thumbnailLink = null;
                         let videoTitle = "මාතෘකාවක් නොමැත";
@@ -68,16 +89,14 @@ export default {
                             console.log(`[SCRAP] Thumbnail found: ${thumbnailLink}`);
                         }
 
-                        // ** IMPROVED TITLE SCRAPING V3 **
-                        // Title එක සොයා ගැනීම: card-body > h4 ව්‍යුහය ඉලක්ක කර ගනිමු.
-                        const titleRegexV3 = /<h4[^>]*>([\s\S]*?)<\/h4>/i;
-                        let titleMatchV3 = resultHtml.match(titleRegexV3);
+                        // ** IMPROVED TITLE SCRAPING V4 **
+                        // Title එක සොයා ගැනීම: h4 ව්‍යුහය ඉලක්ක කර ගනිමු.
+                        const titleRegexV4 = /<h4[^>]*>([\s\S]*?)<\/h4>/i;
+                        let titleMatchV4 = resultHtml.match(titleRegexV4);
                         
-                        if (titleMatchV3 && titleMatchV3[1]) {
-                            let scrapedTitle = titleMatchV3[1].trim();
-                            // HTML tags සහ අනවශ්‍ය spaces ඉවත් කර පිරිසිදු කිරීම
-                            scrapedTitle = scrapedTitle.replace(/<[^>]*>/g, '').trim(); 
-                            scrapedTitle = scrapedTitle.replace(/\s\s+/g, ' '); 
+                        if (titleMatchV4 && titleMatchV4[1]) {
+                            // sanitizeText function එක භාවිතා කර Title එක පිරිසිදු කිරීම
+                            let scrapedTitle = sanitizeText(titleMatchV4[1]);
                             
                             // "Video Title" වැනි Generic text තිබේ නම් එය මග හරින්න
                             if (scrapedTitle.length > 0 && scrapedTitle.toLowerCase() !== "video title") {
@@ -85,21 +104,22 @@ export default {
                             }
                         }
 
-                        // ** IMPROVED STATS SCRAPING V3 (Duration/Description) **
+                        // ** IMPROVED STATS SCRAPING V4 (Duration/Description) **
                         
                         // 1. Duration සොයා ගැනීම
-                        const durationRegexV3 = /Duration:\s*(\d+)\s*seconds/i;
-                        let durationMatchV3 = resultHtml.match(durationRegexV3);
+                        const durationRegexV4 = /Duration:\s*(\d+)\s*seconds/i;
+                        let durationMatchV4 = resultHtml.match(durationRegexV4);
 
-                        if (durationMatchV3 && durationMatchV3[1]) {
-                            videoStats = `දිග: ${durationMatchV3[1].trim()} තත්පර`;
+                        if (durationMatchV4 && durationMatchV4[1]) {
+                            videoStats = `දිග: ${durationMatchV4[1].trim()} තත්පර`;
                         } else {
                             // 2. Description සොයා ගැනීම
-                            const descriptionRegexV3 = /Description:\s*([\s\S]+?)(?=<br>|<\/p>)/i;
-                            let descriptionMatchV3 = resultHtml.match(descriptionRegexV3);
+                            const descriptionRegexV4 = /Description:\s*([\s\S]+?)(?=<br>|<\/p>)/i;
+                            let descriptionMatchV4 = resultHtml.match(descriptionRegexV4);
                             
-                            if (descriptionMatchV3 && descriptionMatchV3[1]) {
-                                let scrapedDesc = descriptionMatchV3[1].trim();
+                            if (descriptionMatchV4 && descriptionMatchV4[1]) {
+                                let scrapedDesc = sanitizeText(descriptionMatchV4[1]);
+                                
                                 // "No video description..." තිබේ නම් එය මග හරින්න
                                 if (scrapedDesc.toLowerCase() !== "no video description...") {
                                      videoStats = `විස්තරය: ${scrapedDesc}`;
@@ -108,7 +128,13 @@ export default {
                         }
 
                         if (videoStats === "") {
-                            videoStats = `විස්තර/දිග තොරතුරු නොමැත.`;
+                            // videoTitle හි තිබූ HTML tags ඉවත් වීම නිසා
+                            if (videoTitle === "Where are videos saved after being downloaded?") {
+                                videoTitle = "මාතෘකාවක් නොමැත";
+                                videoStats = "FAQ කොටස Title ලෙස වැරදි ලෙස scrape වී ඇත. නිවැරදි Title එක සොයාගත නොහැක.";
+                            } else {
+                                videoStats = `විස්තර/දිග තොරතුරු නොමැත.`;
+                            }
                         }
 
 
@@ -147,12 +173,13 @@ export default {
                             console.log(`[SUCCESS] Video Link found (${quality}): ${cleanedUrl}`);
                             
                             // ** 4. නව Caption එක සකස් කිරීම සහ Length Limit Fix **
+                            // Title එක Markdown V2 Bold (**) වලින් ආවරණය කිරීම
                             let finalCaption = `**${videoTitle}**\n\nQuality: ${quality}\n${videoStats}\n\n[🔗 Original Link](${text})`;
                             
                             // Caption Length Limit එක පරීක්ෂා කිරීම (1024 characters)
                             if (finalCaption.length > 1024) {
                                 // Caption එක කපා දැමීම
-                                finalCaption = finalCaption.substring(0, 1000) + '... (Caption Truncated)';
+                                finalCaption = finalCaption.substring(0, 1000) + '... \\(Caption Truncated\\)'; // Markdown escape
                             }
 
                             
@@ -160,7 +187,7 @@ export default {
                             await this.sendVideo(telegramApi, chatId, cleanedUrl, finalCaption, messageId, thumbnailLink);
                             
                         } else {
-                            console.error(`[SCRAPING FAILED] No HD/Normal link found for ${text}. HTML response start: ${resultHtml.substring(0, 50)}...`);
+                            console.error(`[SCRAPING FAILED] No HD/Normal link found for ${text}.`);
                             await this.sendMessage(telegramApi, chatId, '⚠️ සමාවෙන්න, වීඩියෝ Download Link එක සොයා ගැනීමට නොහැකි විය. වීඩියෝව Private (පුද්ගලික) විය හැක.', messageId);
                         }
                         
@@ -195,7 +222,7 @@ export default {
                 body: JSON.stringify({
                     chat_id: chatId,
                     text: text,
-                    parse_mode: 'Markdown', 
+                    parse_mode: 'MarkdownV2', // MarkdownV2 භාවිතා කරනු ලැබේ
                     ...(replyToMessageId && { reply_to_message_id: replyToMessageId }),
                 }),
             });
@@ -212,7 +239,7 @@ export default {
         
         if (videoResponse.status !== 200) {
             console.error(`[TELEGRAM ERROR] Failed to fetch video from CDN. Status: ${videoResponse.status}`);
-            await this.sendMessage(api, chatId, `⚠️ වීඩියෝව කෙලින්ම Upload කිරීමට අසාර්ථකයි. CDN වෙත පිවිසීමට නොහැක.`, replyToMessageId);
+            await this.sendMessage(api, chatId, `⚠️ වීඩියෝව කෙලින්ම Upload කිරීමට අසාර්ථකයි\. CDN වෙත පිවිසීමට නොහැක\.`, replyToMessageId);
             return;
         }
         
@@ -223,7 +250,7 @@ export default {
         const formData = new FormData();
         formData.append('chat_id', chatId);
         formData.append('caption', caption);
-        formData.append('parse_mode', 'Markdown'); 
+        formData.append('parse_mode', 'MarkdownV2'); // MarkdownV2 භාවිතා කරනු ලැබේ
         if (replyToMessageId) {
             formData.append('reply_to_message_id', replyToMessageId);
         }
@@ -257,14 +284,14 @@ export default {
             
             if (!telegramResponse.ok) {
                 console.error("[TELEGRAM UPLOAD ERROR] Status:", telegramResponse.status, "Message:", JSON.stringify(telegramResult));
-                await this.sendMessage(api, chatId, `❌ වීඩියෝව යැවීම අසාර්ථකයි! (File Error). හේතුව: ${telegramResult.description || 'නොදන්නා දෝෂයක්.'}`, replyToMessageId);
+                await this.sendMessage(api, chatId, `❌ වීඩියෝව යැවීම අසාර්ථකයි\! \(File Error\)\. හේතුව: ${sanitizeText(telegramResult.description) || 'නොදන්නා දෝෂයක්\.'}`, replyToMessageId);
             } else {
                 console.log("[TELEGRAM SUCCESS] Video successfully streamed and sent.");
             }
             
         } catch (e) {
             console.error("[TELEGRAM API ERROR] Cannot send video (Upload Mode):", e.message);
-            await this.sendMessage(api, chatId, `❌ වීඩියෝව යැවීම අසාර්ථකයි! (Timeout හෝ Network දෝෂයක්).`, replyToMessageId);
+            await this.sendMessage(api, chatId, `❌ වීඩියෝව යැවීම අසාර්ථකයි\! \(Timeout හෝ Network දෝෂයක්\)\.`, replyToMessageId);
         }
     }
 };
