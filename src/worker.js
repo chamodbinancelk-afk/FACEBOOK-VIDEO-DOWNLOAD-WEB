@@ -1,6 +1,6 @@
 /**
  * src/index.js
- * Final Fix V14: Uses fdown.net for Video, and fbdownloader.to (via callback) for Audio.
+ * Final Fix V15: Corrected POST Request and broader Regex for fbdownloader.to.
  * Requires: A KV Namespace bound as env.VIDEO_LINKS
  */
 
@@ -59,18 +59,18 @@ export default {
                         await this.answerCallbackQuery(telegramApi, callbackQueryId, '⏳ Audio Link එක fbdownloader වෙතින් ලබා ගනිමින්...');
                         
                         try {
-                            // 2. fbdownloader.to වෙත POST Request යැවීම
-                            const fbDownloaderUrl = "https://fbdownloader.to/en/download-facebook-mp3";
+                            // 2. fbdownloader.to වෙත නිවැරදි POST Request යැවීම
+                            const fbDownloaderUrl = "https://fbdownloader.to/en"; // Action URL
                             const formData = new URLSearchParams();
-                            formData.append('url', originalFbUrl); // Original Facebook Link එක යවයි
-                            formData.append('download-mp3', 'Download MP3'); // Form button එක simulate කරයි
-
+                            formData.append('q', originalFbUrl); // Link එක 'q' field එකට යවයි
+                            
                             const fbDownloaderResponse = await fetch(fbDownloaderUrl, {
                                 method: 'POST',
                                 headers: {
                                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
                                     'Content-Type': 'application/x-www-form-urlencoded',
-                                    'Referer': fbDownloaderUrl,
+                                    // Referer එක නිවැරදිව සපයයි
+                                    'Referer': 'https://fbdownloader.to/en/download-facebook-mp3', 
                                 },
                                 body: formData.toString(),
                                 redirect: 'follow'
@@ -79,30 +79,25 @@ export default {
                             const resultHtml = await fbDownloaderResponse.text();
                             
                             // 3. Audio Link එක Scrape කිරීම
-                            // මෙහිදී fbdownloader.to වෙබ් අඩවියේ ඇති MP3 Download Link එක සොයා ගැනීමට උත්සාහ කරයි.
-                            const mp3LinkRegex = /<a[^>]+href=["']?([^"'\s]+)["']?[^>]*>.*Download MP3.*<\/a>/i;
+                            // වඩාත් පුළුල් Regex එකක් භාවිතා කර Download Button එක සොයයි.
+                            // Download Link එක බොහෝ විට "Download MP3" හෝ "Download" යන වචන සහිත button එකේ href එකේ ඇත.
+                            const mp3LinkRegex = /<a[^>]+href=["']?([^"'\s]+)["']?[^>]*>(?:Download MP3|Download).*<\/a>/i;
                             let mp3Match = resultHtml.match(mp3LinkRegex);
                             
                             let finalAudioUrl = null;
                             if (mp3Match && mp3Match[1]) {
                                 finalAudioUrl = mp3Match[1].replace(/&amp;/g, '&'); // Link එක පිරිසිදු කරයි
-                            } else {
-                                // වෙනත් විකල්ප Audio Link එකක් සොයා ගැනීමට උත්සාහ කරයි (උදා: m4a)
-                                const m4aLinkRegex = /<a[^>]+href=["']?([^"'\s]+)["']?[^>]*>.*Download M4A.*<\/a>/i;
-                                let m4aMatch = resultHtml.match(m4aLinkRegex);
-                                if (m4aMatch && m4aMatch[1]) {
-                                    finalAudioUrl = m4aMatch[1].replace(/&amp;/g, '&');
-                                }
                             }
 
-                            if (finalAudioUrl) {
-                                // 4. Audio යැවීම
+                            if (finalAudioUrl && finalAudioUrl.startsWith('http')) {
+                                // 4. Audio යැවීම (Link එක වලංගු බවට සහතික කර)
                                 await this.sendAudio(telegramApi, chatId, finalAudioUrl, messageId, videoTitle);
                             } else {
                                 await this.sendMessage(telegramApi, chatId, escapeMarkdownV2(`⚠️ සමාවෙන්න, fbdownloader\\.to වෙතින් Audio Link එක සොයා ගැනීමට නොහැකි විය\\. වීඩියෝව Private විය හැක\\.`));
                             }
                             
                         } catch (e) {
+                            // Network හෝ Parsing Error
                             await this.sendMessage(telegramApi, chatId, escapeMarkdownV2(`❌ Audio ලබා ගැනීමේදී දෝෂයක් ඇති විය\\.`));
                         }
 
@@ -186,9 +181,9 @@ export default {
                             const videoTitle = 'Facebook Video'; 
                             
                             // ** KV Storage එකට Original Facebook Link එක ගබඩා කිරීම **
-                            // Audio Button එක එබූ විට fbdownloader.to වෙත යැවීම සඳහා
                             const randomId = Math.random().toString(36).substring(2, 12);
-                            await env.VIDEO_LINKS.put(randomId, text, { expirationTtl: 3600 }); // Original Link එක ගබඩා කරයි
+                            // KV Store එකට යවන්නේ Audio Extraction සඳහා අවශ්‍ය වන Original Facebook Link එකයි (text)
+                            await env.VIDEO_LINKS.put(randomId, text, { expirationTtl: 3600 }); 
 
                             const replyMarkup = {
                                 inline_keyboard: [
@@ -242,7 +237,6 @@ export default {
         }
     },
 
-    // sendVideo (unchanged from V12/V13)
     async sendVideo(api, chatId, videoUrl, caption = null, replyToMessageId, thumbnailLink = null, replyMarkup = null) {
         
         const videoResponse = await fetch(videoUrl);
@@ -300,9 +294,7 @@ export default {
         }
     },
 
-    // sendAudio (unchanged - now receives MP3/M4A link)
     async sendAudio(api, chatId, audioUrl, replyToMessageId, title) {
-        // audioUrl යනු fbdownloader.to වෙතින් ලබාගත් MP3/M4A Link එකකි
         try {
             await fetch(`${api}/sendAudio`, {
                 method: 'POST',
@@ -310,7 +302,7 @@ export default {
                 body: JSON.stringify({
                     chat_id: chatId,
                     audio: audioUrl,
-                    caption: escapeMarkdownV2(`🎶 **Audio Downloaded**\n\nමෙම ගොනුව ඔබට Audio ලෙස Save කරගත හැක\\.`),
+                    caption: escapeMarkdownV2(`🎶 **Audio Downloaded**\n\nඔබට මෙය Audio ලෙස Save කරගත හැක\\.`),
                     parse_mode: 'MarkdownV2',
                     ...(replyToMessageId && { reply_to_message_id: replyToMessageId }),
                     title: sanitizeText(title),
@@ -322,7 +314,6 @@ export default {
         }
     },
 
-    // answerCallbackQuery (unchanged)
     async answerCallbackQuery(api, callbackQueryId, text) {
         try {
             await fetch(`${api}/answerCallbackQuery`, {
