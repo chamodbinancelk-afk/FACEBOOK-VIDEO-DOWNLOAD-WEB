@@ -1,6 +1,6 @@
 /**
  * src/index.js
- * Final Fix V22: Migrate Scraping Logic to fbdown.blog (Robust x 3: HTML5/HD/SD + Audio + Thumbnail).
+ * Final Fix V23: Advanced Scraping Logic for fbdown.blog 
  */
 
 // ** 1. MarkdownV2 හි සියලුම විශේෂ අක්ෂර Escape කිරීමේ Helper Function **
@@ -23,7 +23,7 @@ function sanitizeText(text) {
 export default {
     async fetch(request, env, ctx) {
         if (request.method !== 'POST') {
-            return new Response('Hello, I am your FDOWN Telegram Worker Bot (V22).', { status: 200 });
+            return new Response('Hello, I am your FDOWN Telegram Worker Bot (V23).', { status: 200 });
         }
 
         const BOT_TOKEN = env.BOT_TOKEN;
@@ -49,7 +49,7 @@ export default {
                     let videoTitle = "Audio Download";
                     
                     try {
-                        // 🟢 V22 FIX: New Scraper URL (Assumed POST Endpoint)
+                        // 🟢 V23 Scraping URL (Same as V22)
                         const fdownUrl = "https://fbdown.blog/download.php"; 
                         const formData = new URLSearchParams();
                         formData.append('url', originalLink); 
@@ -60,7 +60,7 @@ export default {
                             headers: {
                                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
                                 'Content-Type': 'application/x-www-form-urlencoded',
-                                'Referer': 'https://fbdown.blog/', // 🟢 V22 FIX: New Referer
+                                'Referer': 'https://fbdown.blog/', 
                             },
                             body: formData.toString(),
                             redirect: 'follow' 
@@ -68,12 +68,12 @@ export default {
 
                         const resultHtml = await fdownResponse.text();
 
-                        // 🟢 V22 Scraping Logic: Audio Only Link සොයා ගැනීම
-                        const audioLinkRegex = /<a[^>]+href=["']?([^"'\s]+)["']?[^>]*>\s*MP3\s*[^<]*<\/a>|<a[^>]+href=["']?([^"'\s]+)["']?[^>]*>\s*Download MP3\s*[^<]*<\/a>/i; 
+                        // 🟢 V23 FIX: Audio Link සොයා ගැනීම සඳහා දැඩි Regex
+                        const audioLinkRegex = /<a[^>]+href=["']?([^"'\s]+)["']?[^>]*>\s*(?:MP3|Download MP3|MP3 Audio)\s*[^<]*<\/a>/i; 
                         let audioMatch = resultHtml.match(audioLinkRegex);
 
-                        if (audioMatch && (audioMatch[1] || audioMatch[2])) {
-                            audioUrl = (audioMatch[1] || audioMatch[2]).replace(/&amp;/g, '&');
+                        if (audioMatch && audioMatch[1]) {
+                            audioUrl = audioMatch[1].replace(/&amp;/g, '&');
                             console.log(`[LOG] Audio Link (MP3) found.`);
                             
                             // Title scraping (වඩා හොඳ caption එකකට)
@@ -121,7 +121,7 @@ export default {
                     await this.sendMessage(telegramApi, chatId, escapeMarkdownV2('⌛️ වීඩියෝව හඳුනා ගැනේ... කරුණාකර මොහොතක් රැඳී සිටින්න\\.'), messageId);
                     
                     try {
-                        // 🟢 V22 FIX: New Scraper URL
+                        // 🟢 V23 Scraping URL (Same as V22)
                         const fdownUrl = "https://fbdown.blog/download.php"; 
                         
                         const formData = new URLSearchParams();
@@ -133,7 +133,7 @@ export default {
                             headers: {
                                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
                                 'Content-Type': 'application/x-www-form-urlencoded',
-                                'Referer': 'https://fbdown.blog/', // 🟢 V22 FIX: New Referer
+                                'Referer': 'https://fbdown.blog/', 
                             },
                             body: formData.toString(),
                             redirect: 'follow' 
@@ -160,10 +160,10 @@ export default {
                             console.log(`[LOG] HTML5 Video Tag Link found.`);
                         }
 
-                        // ** 2. HD Button සෙවීම **
+                        // ** 2. HD Button සෙවීම (V23: More comprehensive HD/SD search) **
                         if (!videoUrl) {
-                            // 🟢 V22 FIX: Regex updated for generic HD/SD/Normal links
-                            const hdLinkRegex = /<a[^>]+href=["']?([^"'\s]+)["']?[^>]*>(?:HD Video|Download Video in HD Quality)<\/a>/i;
+                            // HD Links සඳහා දැඩි Regex (HD, Download HD, HD Video, High Quality)
+                            const hdLinkRegex = /<a[^>]+href=["']?([^"'\s]+)["']?[^>]*>(?:HD|Download HD|HD Video|High Quality Video)\s*[^<]*<\/a>/i;
                             let match = resultHtml.match(hdLinkRegex);
 
                             if (match && match[1]) {
@@ -172,10 +172,10 @@ export default {
                             }
                         }
 
-                        // ** 3. SD Button සෙවීම **
+                        // ** 3. SD Button සෙවීම (V23: More comprehensive SD/Normal search) **
                         if (!videoUrl) {
-                            // 🟢 V22 FIX: Regex updated for generic HD/SD/Normal links
-                            const sdLinkRegex = /<a[^>]+href=["']?([^"'\s]+)["']?[^>]*>(?:SD Video|Download Video in Normal Quality|Normal Video)<\/a>/i;
+                            // SD Links සඳහා දැඩි Regex (SD, Normal, Download SD, Low Quality)
+                            const sdLinkRegex = /<a[^>]+href=["']?([^"'\s]+)["']?[^>]*>(?:SD|Normal|Download SD|Low Quality Video|Normal Video)\s*[^<]*<\/a>/i;
                             let match = resultHtml.match(sdLinkRegex);
 
                             if (match && match[1]) {
@@ -183,6 +183,18 @@ export default {
                                 console.log(`[LOG] SD/Normal Video Link found.`);
                             }
                         }
+
+                        // ** 4. Fallback (V23: Generic Download Link සොයන්න) **
+                        if (!videoUrl) {
+                            // `<a href="...link.mp4" download>` වැනි පොදු රටාවක් සොයන්න
+                            const genericLinkRegex = /<a[^>]+href=["']?([^"'\s]+)["']?[^>]*download[^>]*>/i;
+                            let match = resultHtml.match(genericLinkRegex);
+
+                            if (match && match[1]) {
+                                videoUrl = match[1]; 
+                                console.log(`[LOG] Generic Fallback Download Link found.`);
+                            }
+                        }
 
                         if (videoUrl) {
                             let cleanedUrl = videoUrl.replace(/&amp;/g, '&');
@@ -211,7 +223,7 @@ export default {
     },
 
     // ------------------------------------
-    // සහායක Functions
+    // සහායක Functions (මේවා වෙනස් නොවේ)
     // ------------------------------------
     
     async answerCallbackQuery(api, callbackQueryId, text) {
