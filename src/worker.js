@@ -1,34 +1,14 @@
 /**
  * src/index.js
- * Final Fix V12: Added console.error() logging for better debugging in Cloudflare Dashboard.
+ * Final Fix V13: Changed form data key from 'URLz' to 'q' for better compatibility.
  */
 
-// ** 1. MarkdownV2 හි සියලුම විශේෂ අක්ෂර Escape කිරීමේ Helper Function **
-function escapeMarkdownV2(text) {
-    if (!text) return "";
-    return text.replace(/([_*\[\]()~`>#+\-=|{}.!\\\\])/g, '\\$1');
-}
-
-// ** 2. Scraped Text Cleaner Function **
-function sanitizeText(text) {
-    if (!text) return "";
-    let cleaned = text.replace(/<[^>]*>/g, '').trim(); 
-    cleaned = cleaned.replace(/\s\s+/g, ' '); 
-    cleaned = cleaned.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'); 
-    cleaned = cleaned.replace(/([_*\[\]()~`>#+\-=|{}.!\\\\])/g, '\\$1'); 
-    return cleaned;
-}
-
+// ... (ඉහළ ශ්‍රිත නොවෙනස්ව තබන්න)
 
 export default {
     async fetch(request, env, ctx) {
-        if (request.method !== 'POST') {
-            return new Response('Hello, I am your FDOWN Telegram Worker Bot.', { status: 200 });
-        }
+        // ... (ප්‍රධාන fetch ශ්‍රිතයේ ආරම්භය)
 
-        const BOT_TOKEN = env.BOT_TOKEN;
-        const telegramApi = `https://api.telegram.org/bot${BOT_TOKEN}`;
-        
         const DOWNLOADER_URL = "https://fbdown.blog/FB-to-mp3-downloader"; 
 
         try {
@@ -40,11 +20,8 @@ export default {
                 const text = message.text.trim();
                 const messageId = message.message_id;
                 
-                if (text === '/start') {
-                    await this.sendMessage(telegramApi, chatId, escapeMarkdownV2('👋 සුභ දවසක්! මට Facebook වීඩියෝ Link එකක් එවන්න. එවිට මම එය download කර දෙන්නම්.'), messageId);
-                    return new Response('OK', { status: 200 });
-                }
-
+                // ... (start විධානය)
+                
                 const isLink = /^https?:\/\/(www\.)?(facebook\.com|fb\.watch|fb\.me)/i.test(text);
                 
                 if (isLink) {
@@ -53,8 +30,8 @@ export default {
                     try {
                         
                         const formData = new URLSearchParams();
-                        // පරීක්ෂා කිරීම සඳහා 'URLz' භාවිතා කරමු.
-                        formData.append('URLz', text); 
+                        // ** V13 FIX: parameter නම 'q' ලෙස වෙනස් කිරීම **
+                        formData.append('q', text); 
 
                         const downloaderResponse = await fetch(DOWNLOADER_URL, {
                             method: 'POST',
@@ -89,18 +66,16 @@ export default {
                         
                         if (videoUrl) {
                             let cleanedUrl = videoUrl.replace(/&amp;/g, '&');
-                            
-                            // වීඩියෝව යවයි
                             await this.sendVideo(telegramApi, chatId, cleanedUrl, null, messageId, thumbnailLink); 
                             
                         } else {
                             // ** Debugging Log - Link සොයා ගැනීමට නොහැකි වූ විට **
+                            // දැන් HTML හිස් වූවාද නැතිද යන්න මෙයින් පෙන්වනු ඇත.
                             console.log(`Video URL not found. HTML snippet (1000 chars): ${resultHtml.substring(0, 1000)}`); 
                             await this.sendMessage(telegramApi, chatId, escapeMarkdownV2('⚠️ සමාවෙන්න, වීඩියෝ Download Link එක සොයා ගැනීමට නොහැකි විය\\. \\(Private හෝ HTML ව්‍යුහය වෙනස් වී තිබිය හැක\\)'), messageId);
                         }
                         
                     } catch (fdownError) {
-                        // ** Debugging Log - API වෙත ඇමතුම් දීමේදී දෝෂයක් **
                         console.error('FDOWN_API_ERROR:', fdownError.message); 
                         await this.sendMessage(telegramApi, chatId, escapeMarkdownV2('❌ වීඩියෝ තොරතුරු ලබා ගැනීමේදී දෝෂයක් ඇති විය\\. \\(Network හෝ URL වැරදි විය හැක\\)'), messageId);
                     }
@@ -113,94 +88,9 @@ export default {
             return new Response('OK', { status: 200 });
 
         } catch (e) {
-            // ** Debugging Log - ප්‍රධාන Worker දෝෂය **
             console.error('MAIN_WORKER_ERROR:', e.message);
             return new Response('OK', { status: 200 }); 
         }
     },
-
-    // ------------------------------------
-    // සහායක Functions
-    // ------------------------------------
-
-    async sendMessage(api, chatId, text, replyToMessageId) {
-        try {
-            await fetch(`${api}/sendMessage`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    chat_id: chatId,
-                    text: text, 
-                    parse_mode: 'MarkdownV2', 
-                    ...(replyToMessageId && { reply_to_message_id: replyToMessageId }),
-                }),
-            });
-        } catch (e) {
-            // Error handling
-            console.error('SEND_MESSAGE_ERROR:', e.message);
-        }
-    },
-
-    async sendVideo(api, chatId, videoUrl, caption = null, replyToMessageId, thumbnailLink = null) {
-        
-        // ... (වීඩියෝ යැවීමේ කේතය නොවෙනස්ව තබමු)
-        
-        try {
-            // වීඩියෝ Download කිරීම
-            const videoResponse = await fetch(videoUrl);
-            
-            if (videoResponse.status !== 200) {
-                console.error(`VIDEO_FETCH_ERROR: Status ${videoResponse.status} for URL ${videoUrl}`);
-                await this.sendMessage(api, chatId, escapeMarkdownV2(`⚠️ වීඩියෝව කෙලින්ම Upload කිරීමට අසාර්ථකයි\\. CDN වෙත පිවිසීමට නොහැක\\.\\n\\n*Direct URL:* ${videoUrl}`), replyToMessageId);
-                return;
-            }
-            
-            const videoBlob = await videoResponse.blob();
-            
-            const formData = new FormData();
-            formData.append('chat_id', chatId);
-            
-            if (caption) {
-                formData.append('caption', caption);
-                formData.append('parse_mode', 'MarkdownV2'); 
-            }
-            
-            if (replyToMessageId) {
-                formData.append('reply_to_message_id', replyToMessageId);
-            }
-            
-            formData.append('video', videoBlob, 'video.mp4'); 
-
-            if (thumbnailLink) {
-                try {
-                    const thumbResponse = await fetch(thumbnailLink);
-                    if (thumbResponse.ok) {
-                        const thumbBlob = await thumbResponse.blob();
-                        formData.append('thumb', thumbBlob, 'thumbnail.jpg');
-                    } 
-                } catch (e) {
-                    console.error('THUMBNAIL_FETCH_ERROR:', e.message);
-                }
-            }
-
-            // Telegram වෙත යැවීම
-            const telegramResponse = await fetch(`${api}/sendVideo`, {
-                method: 'POST',
-                body: formData, 
-            });
-            
-            const telegramResult = await telegramResponse.json();
-            
-            if (!telegramResponse.ok) {
-                // ** Debugging Log - Telegram වෙත යැවීමේදී දෝෂයක් **
-                console.error(`TELEGRAM_SEND_ERROR: ${telegramResult.description}`);
-                await this.sendMessage(api, chatId, escapeMarkdownV2(`❌ වීඩියෝව යැවීම අසාර්ථකයි\\! \\(Error: ${telegramResult.description || 'නොදන්නා දෝෂයක්\\.'}\\)`), replyToMessageId);
-            }
-            
-        } catch (e) {
-            // ** Debugging Log - sendVideo හි ජාල දෝෂය **
-            console.error('SEND_VIDEO_NETWORK_ERROR:', e.message);
-            await this.sendMessage(api, chatId, escapeMarkdownV2(`❌ වීඩියෝව යැවීම අසාර්ථකයි\\! \\(Network හෝ Timeout දෝෂයක්\\)\\.`), replyToMessageId);
-        }
-    }
+    // ... (සහායක sendMessag/sendVideo ශ්‍රිත නොවෙනස්ව තබන්න)
 };
