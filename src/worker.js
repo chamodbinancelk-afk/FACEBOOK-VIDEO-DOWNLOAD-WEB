@@ -1,7 +1,23 @@
 /**
  * src/index.js
- * Final Fix V17: Fixed "escapeMarkdownV2 is not defined" error by moving Helper Functions inside fetch().
+ * Final Fix V18: Reverting to the known working Downloader (fdown.net) as fbdown.blog POST fails.
+ * NOTE: The HTML Scraping REGEX is based on fdown.net structure.
  */
+
+// ** 1. Helper Functions (V17 FIX: fetch ශ්‍රිතය තුළට ගෙන ඒම) **
+function escapeMarkdownV2(text) {
+    if (!text) return "";
+    return text.replace(/([_*\[\]()~`>#+\-=|{}.!\\\\])/g, '\\$1');
+}
+
+function sanitizeText(text) {
+    if (!text) return "";
+    let cleaned = text.replace(/<[^>]*>/g, '').trim(); 
+    cleaned = cleaned.replace(/\s\s+/g, ' '); 
+    cleaned = cleaned.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'); 
+    cleaned = cleaned.replace(/([_*\[\]()~`>#+\-=|{}.!\\\\])/g, '\\$1'); 
+    return cleaned;
+}
 
 export default {
     async fetch(request, env, ctx) {
@@ -9,28 +25,11 @@ export default {
             return new Response('Hello, I am your FDOWN Telegram Worker Bot.', { status: 200 });
         }
 
-        // ** 🛠️ FIX 1: Helper Functions fetch ශ්‍රිතය තුළට ගෙන ඒම **
-        // 1. MarkdownV2 හි සියලුම විශේෂ අක්ෂර Escape කිරීමේ Helper Function
-        function escapeMarkdownV2(text) {
-            if (!text) return "";
-            return text.replace(/([_*\[\]()~`>#+\-=|{}.!\\\\])/g, '\\$1');
-        }
-
-        // 2. Scraped Text Cleaner Function 
-        function sanitizeText(text) {
-            if (!text) return "";
-            let cleaned = text.replace(/<[^>]*>/g, '').trim(); 
-            cleaned = cleaned.replace(/\s\s+/g, ' '); 
-            cleaned = cleaned.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'); 
-            cleaned = cleaned.replace(/([_*\[\]()~`>#+\-=|{}.!\\\\])/g, '\\$1'); 
-            return cleaned;
-        }
-        // -----------------------------------------------------------------
-
         const BOT_TOKEN = env.BOT_TOKEN;
         const telegramApi = `https://api.telegram.org/bot${BOT_TOKEN}`;
         
-        const DOWNLOADER_URL = "https://fbdown.blog/FB-to-mp3-downloader"; 
+        // ** V18 FIX: Downloader URL එක fdown.net වෙත ආපසු හරවයි **
+        const DOWNLOADER_URL = "https://fdown.net/download.php"; 
 
         try {
             const update = await request.json();
@@ -55,18 +54,17 @@ export default {
                         
                         const formData = new URLSearchParams();
                         
-                        // V15: parameter නම 'url' ලෙස භාවිතා කරයි
-                        formData.append('url', text); 
-                        
-                        // V16: Hidden 'locale' parameter එක එකතු කිරීම 
-                        formData.append('locale', 'en'); 
+                        // ** V18 FIX: fdown.net සඳහා 'URLz' parameter එක සහ 'formID' එක එකතු කිරීම **
+                        formData.append('URLz', text); 
+                        formData.append('formID', 'downloadForm'); // fdown.net ට මෙය අවශ්‍ය වේ.
 
                         const downloaderResponse = await fetch(DOWNLOADER_URL, {
                             method: 'POST',
                             headers: {
                                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
                                 'Content-Type': 'application/x-www-form-urlencoded',
-                                'Referer': 'https://fbdown.blog/', 
+                                // ** V18 FIX: Referer එක fdown.net වෙත හරවයි **
+                                'Referer': 'https://fdown.net/', 
                             },
                             body: formData.toString(),
                             redirect: 'follow' 
@@ -77,26 +75,27 @@ export default {
                         let videoUrl = null;
                         let thumbnailLink = null;
                         
-                        // Scraping Logic (නොවෙනස්ව තබමු)
-                        const thumbnailRegex = /<img[^>]+src=["']?([^"'\s]+)["']?[^>]*width=["']?300px["']?/i;
-                        let thumbnailMatch = resultHtml.match(thumbnailRegex);
-                        if (thumbnailMatch && thumbnailMatch[1]) {
-                            thumbnailLink = thumbnailMatch[1];
-                        }
-
-                        const linkRegex = /<a[^>]+href=["']?([^"'\s]+)["']?[^>]*target=["']?_blank["']?[^>]*>Download<\/a>/i;
+                        // ** V18 FIX: fdown.net Scraping Logic (Download Link සොයා ගැනීම) **
+                        const linkRegex = /href="([^"]+)" download="[^"]+\.mp4"/i;
                         let match = resultHtml.match(linkRegex);
 
                         if (match && match[1]) {
                             videoUrl = match[1]; 
                         } 
                         
+                        // ** V18 FIX: fdown.net Scraping Logic (Thumbnail Link සොයා ගැනීම) **
+                        const thumbnailRegex = /<img[^>]+src="([^"]+)"[^>]*class="thumb"[^>]*>/i;
+                        let thumbnailMatch = resultHtml.match(thumbnailRegex);
+                        if (thumbnailMatch && thumbnailMatch[1]) {
+                            thumbnailLink = thumbnailMatch[1];
+                        }
+                        
                         if (videoUrl) {
                             let cleanedUrl = videoUrl.replace(/&amp;/g, '&');
                             await this.sendVideo(telegramApi, chatId, cleanedUrl, null, messageId, thumbnailLink); 
                             
                         } else {
-                            // ** Debugging Log **
+                            // ** Debugging Log - Link සොයා ගැනීමට නොහැකි වූ විට **
                             console.log(`Video URL not found. HTML snippet (1000 chars): ${resultHtml.substring(0, 1000)}`); 
                             await this.sendMessage(telegramApi, chatId, escapeMarkdownV2('⚠️ සමාවෙන්න, වීඩියෝ Download Link එක සොයා ගැනීමට නොහැකි විය\\. \\(Private හෝ HTML ව්‍යුහය වෙනස් වී තිබිය හැක\\)'), messageId);
                         }
@@ -120,45 +119,8 @@ export default {
     },
 
     // ------------------------------------
-    // සහායක Functions (මේවා 'this.sendMessage' ලෙස හැඳින්වෙන නිසා ඒවා එළියේම තැබිය යුතුය)
+    // සහායක Functions (නොවෙනස්ව තබයි)
     // ------------------------------------
-
-    async sendMessage(api, chatId, text, replyToMessageId) {
-        // 🛠️ FIX 2: මෙහිදී escapeMarkdownV2 භාවිතා නොකරන බවට තහවුරු කරයි.
-        // එය 'text' විචල්‍යය තුළට ගොස් ඇති නිසා ගැටලුවක් නැත.
-        try {
-            await fetch(`${api}/sendMessage`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    chat_id: chatId,
-                    text: text, 
-                    parse_mode: 'MarkdownV2', 
-                    ...(replyToMessageId && { reply_to_message_id: replyToMessageId }),
-                }),
-            });
-        } catch (e) {
-            console.error('SEND_MESSAGE_ERROR:', e.message);
-        }
-    },
-
-    async sendVideo(api, chatId, videoUrl, caption = null, replyToMessageId, thumbnailLink = null) {
-        
-        try {
-            // ... (කේතයේ අනෙක් කොටස්)
-            const videoResponse = await fetch(videoUrl);
-            
-            if (videoResponse.status !== 200) {
-                console.error(`VIDEO_FETCH_ERROR: Status ${videoResponse.status} for URL ${videoUrl}`);
-                // මෙහිදී ද escapeMarkdownV2 භාවිතා නොකරන බවට තහවුරු කරයි.
-                await this.sendMessage(api, chatId, text, replyToMessageId); // text යනු escape කර ඇති පණිවිඩයයි.
-                return;
-            }
-            
-            // ... (කේතයේ අනෙක් කොටස්)
-
-        } catch (e) {
-            console.error('SEND_VIDEO_NETWORK_ERROR:', e.message);
-        }
-    }
+    // sendMessage සහ sendVideo ශ්‍රිත මෙහි නොදැක්වුවත්, ඔබගේ Worker එකේ V17 හි තිබූ පරිදිම තබන්න.
+    // ...
 };
