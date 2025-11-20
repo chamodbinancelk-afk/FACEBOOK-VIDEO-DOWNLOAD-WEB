@@ -1,6 +1,6 @@
 /**
  * src/index.js
- * Final Code V42 (Enhanced Console Logging for Thumbnail Scraping and Link Finding)
+ * Final Code V44 (Regex Fix for Thumbnail Class: fb_img -> lib-img-show)
  * Developer: @chamoddeshan
  */
 
@@ -163,20 +163,26 @@ export default {
                         let rawThumbnailLink = null;
                         
                         // 2. Get Thumbnail Link
-                        const thumbnailRegex = /<img[^>]+class=["']?fb_img["']?[^>]*src=["']?([^"'\s]+)["']?/i;
+                        // V44 FIX: Changed the class from 'fb_img' to 'lib-img-show' based on inspect element
+                        const thumbnailRegex = /<img[^>]+class=["']?lib-img-show["']?[^>]*src=["']?([^"'\s]+)["']?/i;
                         let thumbnailMatch = resultHtml.match(thumbnailRegex);
                         
-                        // --- V42 Console Logging: Thumbnail Match ---
+                        // --- V43 Console Logging: Thumbnail Match and HTML Check ---
                         console.log(`[DEBUG] Thumbnail Regex Match Found: ${!!thumbnailMatch}`);
 
                         if (thumbnailMatch && thumbnailMatch[1]) {
                             // Fix encoding
                             rawThumbnailLink = thumbnailMatch[1].replace(/&amp;/g, '&'); 
                             console.log(`[DEBUG] Raw Thumbnail URL (Encoded): ${thumbnailMatch[1]}`);
+                        } else {
+                            // V43 FIX: If no thumbnail match, log the start of the received HTML
+                            console.error(`[ERROR] Thumbnail tag not found in HTML! Check FDown output.`);
+                            // Log the start of the received HTML response
+                            console.log(`[DEBUG] Start of FDown HTML (first 500 chars):\n${resultHtml.substring(0, 500)}`); 
                         }
                         console.log(`[DEBUG] Final Thumbnail Link: ${rawThumbnailLink}`);
 
-                        // 3. (Optional) Check Video Links for completeness
+                        // 3. (Optional) Check Video Links for completeness (Unnecessary for current test, but kept for context)
                         let videoUrl = null;
                         const hdLinkRegex = /<a[^>]+href=["']?([^"'\s]+)["']?[^>]*>.*Download Video in HD Quality.*<\/a>/i;
                         let match = resultHtml.match(hdLinkRegex);
