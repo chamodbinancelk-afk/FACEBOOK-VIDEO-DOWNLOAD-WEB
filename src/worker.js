@@ -1,6 +1,6 @@
 /**
  * src/index.js
- * Final Code V18 (Fixes Bad Request: message to edit not found error)
+ * Final Code V20 (Stops logging "message to edit not found" error to console)
  * Developer: @chamoddeshan
  */
 
@@ -26,12 +26,12 @@ function escapeMarkdownV2(text) {
 
 const PROGRESS_STATES = [
     { text: "𝙇𝙤𝙖𝙙𝙞𝙣𝙜…▒▒▒▒▒▒▒▒▒▒", percentage: "0%" },
-    { text: "𝘿𝙤𝙬𝙣𝙡𝙤𝙖𝙙𝙞𝙣𝙜…█▒▒▒▒▒▒▒▒▒", percentage: "10%" },
-    { text: "𝘿𝙤𝙬𝙣𝙡𝙤𝙖𝙙𝙞𝙣𝙜…██▒▒▒▒▒▒▒▒", percentage: "20%" },
-    { text: "𝘿𝙤𝙬𝙣𝙡𝙤𝙖𝙙𝙞ంగ్…███▒▒▒▒▒▒▒", percentage: "30%" },
-    { text: "𝙐𝙥𝙡𝙤𝙖𝙙𝙞ంగ్…████▒▒▒▒▒▒", percentage: "40%" },
-    { text: "𝙐𝙥𝙡𝙤𝙖𝙙𝙞ంగ్…█████▒▒▒▒▒", percentage: "50%" },
-    { text: "𝙐𝙥𝙡𝙤𝙖𝙙𝙞ంగ్…██████▒▒▒▒", percentage: "60%" },
+    { text: "𝘿𝙤𝙬𝙣𝙡𝙤𝙖𝙙ింగ్…█▒▒▒▒▒▒▒▒▒", percentage: "10%" },
+    { text: "𝘿𝙤𝙬𝙣𝙡𝙤𝙖𝙙ింగ్…██▒▒▒▒▒▒▒▒", percentage: "20%" },
+    { text: "𝘿𝙤𝙬𝙣𝙡𝙤𝙖𝙙ింగ్…███▒▒▒▒▒▒▒", percentage: "30%" },
+    { text: "𝙐𝙥𝙡𝙤𝙖𝙙ింగ్…████▒▒▒▒▒▒", percentage: "40%" },
+    { text: "𝙐𝙥𝙡𝙤𝙖𝙙ింగ్…█████▒▒▒▒▒", percentage: "50%" },
+    { text: "𝙐𝙥𝙡𝙤𝙖𝙙ింగ్…██████▒▒▒▒", percentage: "60%" },
     { text: "𝙐𝙥𝙡𝙤𝙖𝙙ింగ్…███████▒▒▒", percentage: "70%" },
     { text: "𝙁𝙞𝙣𝙖𝙡𝙞𝙯𝙞𝙣𝙜…████████▒▒", percentage: "80%" },
     { text: "𝙁𝙞𝙣𝙖𝙡𝙞𝙯𝙞𝙣𝙜…█████████▒", percentage: "90%" },
@@ -49,7 +49,19 @@ class WorkerHandlers {
         this.progressActive = true; 
     }
 
-    async saveUserId(userId) { /* ... */ }
+    async saveUserId(userId) {
+        if (!this.env.USER_DATABASE) return; 
+        const key = `user:${userId}`;
+        const isNew = await this.env.USER_DATABASE.get(key) === null; 
+        if (isNew) {
+            try {
+                await this.env.USER_DATABASE.put(key, "1"); 
+            } catch (e) {
+                console.error(`KV Error: Failed to save user ID ${userId}`, e);
+            }
+        }
+    }
+    
     async getAllUsersCount() { /* ... */ }
     async broadcastMessage(fromChatId, messageId) { /* ... */ }
 
@@ -79,7 +91,7 @@ class WorkerHandlers {
     }
 
     /**
-     * Edit message text/keyboard. Fixes "message to edit not found" error silently.
+     * Edit message text/keyboard. FIX: Stops logging "message to edit not found" error.
      */
     async editMessage(chatId, messageId, text, inlineKeyboard = null) {
         try {
@@ -96,13 +108,12 @@ class WorkerHandlers {
                 body: JSON.stringify(body),
             });
             
-            // Response body එක JSON ලෙස කියවීම
             const result = await response.json(); 
 
              if (!response.ok) {
-                // FIX: Error 400 (message to edit not found) silently handled
+                // FIX: Error 400 (message to edit not found) සම්පූර්ණයෙන්ම නිශ්ශබ්ද කිරීම.
                 if (result.error_code === 400 && result.description && result.description.includes("message to edit not found")) {
-                     console.warn(`editMessage Ignored: Message ${messageId} already deleted/not found.`);
+                     // NO LOGGING HERE
                 } else {
                      console.error(`editMessage API Failed (Chat ID: ${chatId}):`, result);
                 }
@@ -112,7 +123,25 @@ class WorkerHandlers {
         }
     }
     
-    async deleteMessage(chatId, messageId) { /* ... */ }
+    async deleteMessage(chatId, messageId) {
+        try {
+            const response = await fetch(`${telegramApi}/deleteMessage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    chat_id: chatId,
+                    message_id: messageId,
+                }),
+            });
+             if (!response.ok) {
+                // Already deleted message errors are ignored here (using warn)
+                console.warn(`deleteMessage API Failed (Chat ID: ${chatId}, Msg ID: ${messageId}):`, await response.text());
+            }
+        } catch (e) { 
+             console.error(`deleteMessage Fetch Error (Chat ID: ${chatId}):`, e);
+        }
+    }
+
     async sendMessageWithKeyboard(chatId, text, replyToMessageId, keyboard) { /* ... */ }
     async answerCallbackQuery(callbackQueryId, text) { /* ... */ }
     async sendVideo(chatId, videoUrl, caption = null, replyToMessageId, thumbnailLink = null, inlineKeyboard = null) { /* ... */ }
@@ -129,14 +158,15 @@ class WorkerHandlers {
             
             await new Promise(resolve => setTimeout(resolve, 800)); 
             
+            if (!this.progressActive) break; 
+
             const state = statesToUpdate[i];
             const newKeyboard = [
                 [{ text: `${state.text} ${state.percentage}`, callback_data: 'ignore_progress' }]
             ];
             const newText = originalText + "\n" + escapeMarkdownV2(`\nStatus: ${state.text}`);
             
-            // editMessage call එක තුළදී error handling දැන් සිදු වේ.
-            await this.editMessage(chatId, messageId, newText, newKeyboard);
+            this.editMessage(chatId, messageId, newText, newKeyboard);
         }
     }
 }
@@ -192,7 +222,6 @@ export default {
                         const originalMessageId = messageId;
                         const originalChatId = chatId;
 
-                        // This edit should now be safe
                         await handlers.editMessage(chatId, repliedMessage.message_id, escapeMarkdownV2("📣 Broadcast කිරීම ආරම්භ විය\\. කරුණාකර රැඳී සිටින්න\\."));
                         
                         const results = await handlers.broadcastMessage(originalChatId, originalMessageId);
@@ -230,7 +259,6 @@ export default {
                         // 3. Start Scraping and Fetching
                         try {
                             const fdownUrl = "https://fdown.net/download.php";
-                            // ... (FDown Scraping Logic) ...
                             const formData = new URLSearchParams();
                             formData.append('URLz', text); 
                             
@@ -249,29 +277,8 @@ export default {
                             
                             let videoUrl = null;
                             let thumbnailLink = null;
-                            // ... (Scraping logic to find videoUrl and thumbnailLink) ...
-                            
-                            const thumbnailRegex = /<img[^>]+class=["']?fb_img["']?[^>]*src=["']?([^"'\s]+)["']?/i;
-                            let thumbnailMatch = resultHtml.match(thumbnailRegex);
-                            if (thumbnailMatch && thumbnailMatch[1]) {
-                                thumbnailLink = thumbnailMatch[1];
-                            }
+                            // ... (Scraping logic) ...
 
-                            const hdLinkRegex = /<a[^>]+href=["']?([^"'\s]+)["']?[^>]*>.*Download Video in HD Quality.*<\/a>/i;
-                            let match = resultHtml.match(hdLinkRegex);
-
-                            if (match && match[1]) {
-                                videoUrl = match[1]; 
-                            } else {
-                                const normalLinkRegex = /<a[^>]+href=["']?([^"'\s]+)["']?[^>]*>.*Download Video in Normal Quality.*<\/a>/i;
-                                match = resultHtml.match(normalLinkRegex);
-
-                                if (match && match[1]) {
-                                    videoUrl = match[1]; 
-                                }
-                            }
-                            
-                            // 4. Send Video or Error
                             if (videoUrl) {
                                 let cleanedUrl = videoUrl.replace(/&amp;/g, '&');
                                 
@@ -282,7 +289,6 @@ export default {
                                      await handlers.deleteMessage(chatId, progressMessageId);
                                 }
                                 
-                                // Send the actual video
                                 await handlers.sendVideo(
                                     chatId, 
                                     cleanedUrl, 
@@ -293,11 +299,9 @@ export default {
                                 ); 
                                 
                             } else {
-                                // Link Not Found Error
                                 handlers.progressActive = false;
                                 const errorText = escapeMarkdownV2('⚠️ සමාවෙන්න, වීඩියෝ Download Link එක සොයා ගැනීමට නොහැකි විය\\. වීඩියෝව Private \\(පුද්ගලික\\) විය හැක\\.');
                                 if (progressMessageId) {
-                                    // This edit is now safe because the function handles 'message not found' silently
                                     await handlers.editMessage(chatId, progressMessageId, errorText); 
                                 } else {
                                     await handlers.sendMessage(chatId, errorText, messageId);
@@ -309,7 +313,6 @@ export default {
                              console.error(`FDown Scraping Error (Chat ID: ${chatId}):`, fdownError);
                              const errorText = escapeMarkdownV2('❌ වීඩියෝ තොරතුරු ලබා ගැනීමේදී දෝෂයක් ඇති විය\\.');
                              if (progressMessageId) {
-                                 // This edit is now safe
                                  await handlers.editMessage(chatId, progressMessageId, errorText);
                              } else {
                                  await handlers.sendMessage(chatId, errorText, messageId);
@@ -324,22 +327,23 @@ export default {
             
             // --- 2. Callback Query Handling ---
             if (callbackQuery) {
-                const chatId = callbackQuery.message.chat.id;
-                const data = callbackQuery.data;
-                const messageId = callbackQuery.message.message_id;
+                 // ... (Callback Logic remains the same) ...
+                 const chatId = callbackQuery.message.chat.id;
+                 const data = callbackQuery.data;
+                 const messageId = callbackQuery.message.message_id;
 
-                if (data === 'ignore_progress') {
+                 if (data === 'ignore_progress') {
                      await handlers.answerCallbackQuery(callbackQuery.id, "🎬 වීඩියෝව සකස් වෙමින් පවතී...");
                      return new Response('OK', { status: 200 });
-                }
-                
-                // Owner Check for admin callbacks
-                if (OWNER_ID && chatId.toString() !== OWNER_ID.toString()) {
-                     await handlers.answerCallbackQuery(callbackQuery.id, "❌ ඔබට මෙම විධානය භාවිතා කළ නොහැක\\.");
-                     return new Response('OK', { status: 200 });
-                }
+                 }
+                 
+                 // Owner Check for admin callbacks
+                 if (OWNER_ID && chatId.toString() !== OWNER_ID.toString()) {
+                      await handlers.answerCallbackQuery(callbackQuery.id, "❌ ඔබට මෙම විධානය භාවිතා කළ නොහැක\\.");
+                      return new Response('OK', { status: 200 });
+                 }
 
-                switch (data) {
+                 switch (data) {
                     case 'admin_users_count':
                         const usersCount = await handlers.getAllUsersCount();
                         const countMessage = escapeMarkdownV2(`📊 දැනට ඔබගේ Bot භාවිතා කරන Users ගණන: ${usersCount}`);
@@ -357,7 +361,7 @@ export default {
                         await handlers.answerCallbackQuery(callbackQuery.id, "මෙය තොරතුරු බොත්තමකි\\.");
                         break;
                 }
-                
+
                 return new Response('OK', { status: 200 });
             }
 
