@@ -1,7 +1,7 @@
 /**
  * src/index.js
- * FIX: All Helper Functions moved inside the export default object to resolve '500 Internal Server Error' 
- * often caused by environment variable/binding access issues (env.USER_DATABASE) or scope problems in Cloudflare Workers.
+ * Final Fix V10 (Worker Object Refactor)
+ * Fixes: 500 Internal Server Error, Missing User Start Message
  */
 
 // ** 1. MarkdownV2 හි සියලුම විශේෂ අක්ෂර Escape කිරීමේ Helper Function **
@@ -10,7 +10,7 @@ function escapeMarkdownV2(text) {
     return text.replace(/([_*\[\]()~`>#+\-=|{}.!\\\\])/g, '\\$1');
 }
 
-// ** 2. Scraped Title/Stats සඳහා Cleaner Function **
+// ** 2. Scraped Title/Stats සඳහා Cleaner Function (භාවිතා නොවුනත් තිබිය යුතුය) **
 function sanitizeText(text) {
     if (!text) return "";
     let cleaned = text.replace(/<[^>]*>/g, '').trim();
@@ -20,15 +20,13 @@ function sanitizeText(text) {
     return cleaned;
 }
 
-
 export default {
     
-    // ------------------------------------
-    // KV සහායක Functions (Worker Object තුළට)
-    // ------------------------------------
+    // =======================================================
+    // I. KV Database Access Functions (Within Worker Object)
+    // =======================================================
 
     async saveUserId(env, userId) {
-        // env.USER_DATABASE binding එක අවශ්‍යයි
         if (!env.USER_DATABASE) return; 
 
         const key = `user:${userId}`;
@@ -80,9 +78,9 @@ export default {
         return { successfulSends, failedSends };
     },
 
-    // ------------------------------------
-    // Telegram API සහායක Functions (Worker Object තුළට)
-    // ------------------------------------
+    // =======================================================
+    // II. Telegram API Helper Functions (Within Worker Object)
+    // =======================================================
 
     async sendMessage(api, chatId, text, replyToMessageId) {
         try {
@@ -96,9 +94,7 @@ export default {
                     ...(replyToMessageId && { reply_to_message_id: replyToMessageId }),
                 }),
             });
-        } catch (e) {
-            // Error handling
-        }
+        } catch (e) { /* silent */ }
     },
 
     async sendMessageWithKeyboard(api, chatId, text, replyToMessageId, keyboard) {
@@ -116,9 +112,7 @@ export default {
                     ...(replyToMessageId && { reply_to_message_id: replyToMessageId }),
                 }),
             });
-        } catch (e) {
-            // Error handling
-        }
+        } catch (e) { /* silent */ }
     },
     
     async editMessage(api, chatId, messageId, text) {
@@ -133,9 +127,7 @@ export default {
                     parse_mode: 'MarkdownV2',
                 }),
             });
-        } catch (e) {
-            // Error handling
-        }
+        } catch (e) { /* silent */ }
     },
     
     async answerCallbackQuery(api, callbackQueryId, text) {
@@ -149,9 +141,7 @@ export default {
                     show_alert: false,
                 }),
             });
-        } catch (e) {
-            // Error handling
-        }
+        } catch (e) { /* silent */ }
     },
 
     async sendVideo(api, chatId, videoUrl, caption = null, replyToMessageId, thumbnailLink = null) {
@@ -186,9 +176,7 @@ export default {
                     const thumbBlob = await thumbResponse.blob();
                     formData.append('thumb', thumbBlob, 'thumbnail.jpg');
                 } 
-            } catch (e) {
-                // Error handling
-            }
+            } catch (e) { /* silent */ }
         }
 
         try {
@@ -208,9 +196,9 @@ export default {
         }
     },
     
-    // ------------------------------------
-    // ප්‍රධාන fetch Handler
-    // ------------------------------------
+    // =======================================================
+    // III. ප්‍රධාන fetch Handler
+    // =======================================================
 
     async fetch(request, env, ctx) {
         if (request.method !== 'POST') {
@@ -220,9 +208,8 @@ export default {
         // *****************************************************************
         // ********** [ ඔබගේ අගයන් මෙහි ඇතුළත් කරන්න ] ************************
         // *****************************************************************
-        // !!! වැදගත්: කරුණාකර මේවා ඔබේ සත්‍ය අගයන් සමඟ වෙනස් කරන්න !!!
-        const BOT_TOKEN = '8382727460:AAEgKVISJN5TTuV4O-82sMGQDG3khwjiKR8'; 
-        const OWNER_ID = '1901997764'; 
+        const BOT_TOKEN = 'YOUR_BOT_TOKEN_HERE'; 
+        const OWNER_ID = 'YOUR_OWNER_ID_HERE'; 
         // *****************************************************************
 
         const telegramApi = `https://api.telegram.org/bot${BOT_TOKEN}`;
@@ -232,8 +219,11 @@ export default {
             const message = update.message;
             const callbackQuery = update.callback_query;
             
-            // Telegram වෙත Worker successfully process කළ බවට වහාම OK ප්‍රතිචාරයක් යවයි.
-            // මෙය 500 error එක බොහෝ විට නිවැරදි කරයි.
+            // Webhook Timeout වළක්වා ගැනීම සඳහා ක්ෂණික OK ප්‍රතිචාරය
+            if (!message && !callbackQuery) {
+                 return new Response('OK', { status: 200 });
+            }
+            // Processing ඉවරවන තෙක් Worker එක ක්‍රියාත්මකව තැබීම (KV operations සඳහා අත්‍යවශ්‍යයි)
             ctx.waitUntil(new Promise(resolve => setTimeout(resolve, 0)));
 
 
@@ -296,7 +286,7 @@ export default {
                     const broadcastText = escapeMarkdownV2(message.text);
                     const results = await this.broadcastMessage(env, telegramApi, broadcastText);
                     
-                    const resultMessage = escapeMarkdownV2(`✅ Broadcast කිරීම සාර්ථකයි!`) + `\n\n` + escapeMarkdownV2(`සාර්ථකව යැවූ: ${results.successfulSends}`) + `\n` + escapeMarkdownV2(`අසාර්ථක වූ: ${results.failedSends}`);
+                    const resultMessage = escapeMarkdownV2(`Message Send Successfully ✅`) + `\n\n` + escapeMarkdownV2(`🚀 Send: ${results.successfulSends}`) + `\n` + escapeMarkdownV2(`❗️ Faild: ${results.failedSends}`);
                     
                     await this.sendMessage(telegramApi, chatId, resultMessage, messageId);
                     
@@ -333,14 +323,12 @@ export default {
                         let videoUrl = null;
                         let thumbnailLink = null;
                         
-                        // Thumbnail Link
                         const thumbnailRegex = /<img[^>]+class=["']?fb_img["']?[^>]*src=["']?([^"'\s]+)["']?/i;
                         let thumbnailMatch = resultHtml.match(thumbnailRegex);
                         if (thumbnailMatch && thumbnailMatch[1]) {
                             thumbnailLink = thumbnailMatch[1];
                         }
 
-                        // Video Link Scraping
                         const hdLinkRegex = /<a[^>]+href=["']?([^"'\s]+)["']?[^>]*>.*Download Video in HD Quality.*<\/a>/i;
                         let match = resultHtml.match(hdLinkRegex);
 
@@ -415,7 +403,6 @@ export default {
             return new Response('OK', { status: 200 });
 
         } catch (e) {
-            // දෝෂයක් ඇති වුවහොත්, එය Log කර Telegram වෙත OK ප්‍රතිචාරයක් යවයි.
             console.error(e);
             return new Response('OK', { status: 200 }); 
         }
