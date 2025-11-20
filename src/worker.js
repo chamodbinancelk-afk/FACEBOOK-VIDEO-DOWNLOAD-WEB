@@ -1,6 +1,6 @@
 /**
  * src/index.js
- * Final Code V46 (Adds a unique marker to the console log when the thumbnail is not found)
+ * Final Code V47 (Fixes sendPhoto API failure by converting relative URL to absolute URL)
  * Developer: @chamoddeshan
  */
 
@@ -172,12 +172,21 @@ export default {
 
                         if (thumbnailMatch && thumbnailMatch[1]) {
                             // Fix encoding
-                            rawThumbnailLink = thumbnailMatch[1].replace(/&amp;/g, '&'); 
-                            console.log(`[DEBUG] Raw Thumbnail URL (Encoded): ${thumbnailMatch[1]}`);
+                            let tempLink = thumbnailMatch[1].replace(/&amp;/g, '&'); 
+                            console.log(`[DEBUG] Raw Thumbnail URL (Encoded): ${tempLink}`);
+
+                            // V47 FIX: Ensure the link is absolute by prefixing the base domain if it starts with a relative path
+                            if (tempLink.startsWith('img/') || tempLink.startsWith('/')) {
+                                // Assume 'https://fdown.net/' is the base URL
+                                rawThumbnailLink = 'https://fdown.net/' + tempLink.replace(/^\//, ''); // Remove leading slash if present
+                                console.log(`[DEBUG] V47 FIX: Applied FDown prefix.`);
+                            } else {
+                                rawThumbnailLink = tempLink;
+                            }
                         } else {
                             // If no thumbnail match, log the start of the received HTML
                             console.error(`[ERROR] Thumbnail tag not found in HTML! Check FDown output.`);
-                            // V46 FIX: Add a unique marker to confirm this block was hit
+                            // V46 Marker
                             console.log(`[DEBUG] ---> THUMBNAIL FAIL BLOCK EXECUTED <---`); 
                             // Log the start of the received HTML response
                             console.log(`[DEBUG] Start of FDown HTML (first 500 chars):\n${resultHtml.substring(0, 500)}`); 
