@@ -1,6 +1,6 @@
 /**
  * src/index.js
- * Complete Code V51 (Improved Thumbnail Failure Handling)
+ * Complete Code V52 (Thumbnail via API, Video Link Re-fetched on Click for Sound Fix)
  * Developer: @chamoddeshan
  */
 
@@ -103,8 +103,11 @@ class WorkerHandlers {
             const videoResponse = await fetch(videoUrl, {
                 method: 'GET',
                 headers: {
+                    // ⭐️ Sound සහිත වීඩියෝව ලබා ගැනීමට උපකාරී වන Headers
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                    'Referer': 'https://fdown.net/', // ⬅️ Video Download Source (fdown.net header)
+                    'Referer': 'https://fdown.net/', // ⬅️ fdown.net Header එක
+                    'Accept': 'video/mp4,video/webm,video/*;q=0.9,application/ogg;q=0.7,audio/*;q=0.6,*/*;q=0.5',
+                    'Accept-Language': 'en-US,en;q=0.5'
                 },
             });
             
@@ -243,11 +246,11 @@ class WorkerHandlers {
 
 
 // *****************************************************************
-// ********** [ 3. Main Fetch Handler ] ******************************
+// ********** [ 3. Main Fetch Handler and Helper Functions ] *********
 // *****************************************************************
 
 async function fetchVideoInfo(link) {
-    // ⬅️ API හරහා Video තොරතුරු ලබා ගැනීම
+    // ⬅️ Thumbnail සහ Metadata සඳහා API කැඳවීම
     const apiUrl = "https://fdown.isuru.eu.org/info";
     
     const apiResponse = await fetch(apiUrl, {
@@ -264,6 +267,28 @@ async function fetchVideoInfo(link) {
     }
     
     return apiResponse.json();
+}
+
+// ⭐️ නව Helper ශ්‍රිතය: Button Click එකේදී නැවුම් Link එකක් ලබා ගැනීමට API කැඳවීම
+async function fetchSpecificDownloadLink(facebookUrl, quality) {
+    try {
+        // නැවතත් API කැඳවනු ලැබේ.
+        const videoData = await fetchVideoInfo(facebookUrl); 
+        
+        if (videoData.available_formats) {
+            const selectedFormat = videoData.available_formats.find(f => f.quality === quality);
+            
+            if (selectedFormat && selectedFormat.url) {
+                console.log(`[DEBUG] Re-fetched and found link for ${quality}.`);
+                // &amp; නිවැරදි කිරීම
+                return selectedFormat.url.replace(/&amp;/g, '&');
+            }
+        }
+        return null;
+    } catch (e) {
+        console.error("[ERROR] Failed to re-fetch specific download link:", e);
+        return null;
+    }
 }
 
 
@@ -306,8 +331,8 @@ export default {
                     await handlers.answerCallbackQuery(callbackQuery.id, `Starting ${quality} download...`);
 
                     try {
-                        let downloadLink = null;
                         let videoTitle = 'Facebook Video';
+                        let originalLink = null;
                         
                         // --- KV Read and Process Logic ---
                         if (!handlers.kv) {
@@ -317,28 +342,33 @@ export default {
                         // Retrieve data from KV
                         const kvDataString = await handlers.kv.get(videoKey);
                         if (!kvDataString) {
-                            // This is the error message the user is seeing due to the race condition/double click
                             await handlers.editMessageText(chatId, messageId, htmlBold('❌ වීඩියෝ තොරතුරු කල් ඉකුත් වී ඇත. නැවත සබැඳිය එවන්න.'));
                             return new Response('OK', { status: 200 });
                         }
                         
                         const kvData = JSON.parse(kvDataString);
                         videoTitle = kvData.title || videoTitle;
-                        downloadLink = kvData.qualityMap[quality];
+                        originalLink = kvData.originalLink; // ⭐️ KV එකෙන් මුල් link එක ලබා ගැනීම
+
+                        if (!originalLink) {
+                            await handlers.editMessageText(chatId, messageId, htmlBold(`❌ මුල් සබැඳිය සොයා ගැනීමට නොහැකි විය (KV Error).`));
+                            return new Response('OK', { status: 200 });
+                        }
+
+                        // ⭐️ Site Logic එක අනුකරණය කරමින්, නැවුම් Download Link එක ලබා ගැනීම
+                        const downloadLink = await fetchSpecificDownloadLink(originalLink, quality);
 
                         // ***********************************************
                         // *** FIX: REMOVED KV DELETION STEP *** (V51 Fix)
                         // ***********************************************
                         
                         if (!downloadLink) {
-                            await handlers.editMessageText(chatId, messageId, htmlBold(`❌ ${quality} වීඩියෝ ලින්ක් එක සොයා ගැනීමට නොහැකි විය (KV Link Missing).`));
+                            await handlers.editMessageText(chatId, messageId, htmlBold(`❌ ${quality} වීඩියෝ ලින්ක් එක සොයා ගැනීමට නොහැකි විය (Link Re-fetch Failed).`));
                             return new Response('OK', { status: 200 });
                         }
 
                         // 4. Send the Video
                         const caption = `${htmlBold(videoTitle)}\n\n📥 ${quality} Video Downloaded!`;
-                        // Remove '&amp;' from URL for sendVideo API
-                        downloadLink = downloadLink.replace(/&amp;/g, '&'); 
                         
                         // Note: thumbnailLink is null here, but sendVideo attempts to fetch thumbnail if provided
                         const sentVideoId = await handlers.sendVideo(chatId, downloadLink, caption, null, null); 
@@ -401,12 +431,12 @@ export default {
                     );
                     
                     try {
-                        // Use Facebook Video Download API
+                        // Use Facebook Video Download API (Thumbnail & Metadata)
                         const videoData = await fetchVideoInfo(text);
                         
                         console.log(`[DEBUG] API Response:`, JSON.stringify(videoData));
                         
-                        // Extract information - Robustly
+                        // Metadata Extraction Logic
                         let rawThumbnailLink = null;
                         let videoTitle = 'Facebook Video';
                         let duration = null;
@@ -414,7 +444,6 @@ export default {
                         let viewCount = null;
                         let uploadDate = null;
                         
-                        // ⭐️ වැඩිදියුණු කළ Thumbnail Extraction Logic
                         const info = videoData.video_info || videoData.data || videoData;
                         
                         if (info) {
@@ -430,14 +459,11 @@ export default {
                             uploadDate = info.upload_date;
                         }
                         
-                        console.log(`[DEBUG] Thumbnail URL: ${rawThumbnailLink}`);
-                        console.log(`[DEBUG] Video Title: ${videoTitle}`);
-
+                        // Thumbnail Sending Logic
                         let photoMessageId = null;
-
-                        // ⭐️ Thumbnail යැවීමේ කොටස
+                        
                         if (rawThumbnailLink) {
-                            // Format duration, viewCount, uploadDate (කලින් තිබූ Logic එක)
+                            // ... (Caption formatting)
                             let durationText = '';
                             if (duration) {
                                 const minutes = Math.floor(duration / 60);
@@ -453,7 +479,6 @@ export default {
                                 uploadDateText = `${year}-${month}-${day}`;
                             }
                             
-                            // Build caption
                             let caption = `${htmlBold(videoTitle)}\n\n`;
                             if (uploader) caption += `👤 ${uploader}\n`;
                             if (durationText) caption += `⏱️ Duration: ${durationText}\n`;
@@ -461,7 +486,6 @@ export default {
                             if (uploadDateText) caption += `📅 Uploaded: ${uploadDateText}\n`;
                             caption += `\n✅ ${htmlBold('Thumbnail Downloaded!')}`;
                             
-                            // Send the Thumbnail Photo
                             photoMessageId = await handlers.sendPhoto(
                                 chatId, 
                                 rawThumbnailLink, 
@@ -470,17 +494,12 @@ export default {
                             );
                             
                             if (photoMessageId && initialMessage) {
-                                // සාර්ථක නම් "Searching..." message එක මකන්න
                                 handlers.deleteMessage(chatId, initialMessage); 
-                                console.log("[SUCCESS] Thumbnail sent successfully and temporary message deleted.");
                             } else {
-                                // Thumbnail යැවීම අසාර්ථක වුවහොත්, initial message එක Edit කරන්න
-                                console.warn("[WARN] Thumbnail sending failed. Editing initial message instead.");
                                 await handlers.editMessageText(chatId, initialMessage, htmlBold('⚠️ Thumbnail එක යැවීම අසාර්ථක විය. Quality Buttons යවමින්...'));
                                 photoMessageId = initialMessage; 
                             }
                         } else if (initialMessage) {
-                             // Thumbnail Link එකක් සොයා ගැනීමට නොහැකි වූ විට
                              await handlers.editMessageText(chatId, initialMessage, htmlBold('⚠️ සමාවෙන්න, මේ Video එකේ Thumbnail එක සොයා ගැනීමට නොහැකි විය. Quality Buttons යවමින්...'));
                              photoMessageId = initialMessage;
                         }
@@ -488,26 +507,21 @@ export default {
                         // Send quality selection buttons after thumbnail
                         if (videoData.available_formats && videoData.available_formats.length > 0) {
                             
-                            // --- KV Logic Start: Store data and use short key in callback_data ---
+                            // --- KV Logic Start ---
                             if (!handlers.kv) {
-                                console.error("[CRITICAL] USER_DATABASE KV binding is missing. Cannot proceed with short callbacks.");
+                                console.error("[CRITICAL] USER_DATABASE KV binding is missing.");
                                 await handlers.sendMessage(chatId, htmlBold('❌ දත්ත ගබඩාව (KV) නොමැත. කරුණාකර Bot සකස් කරන්න.'), messageId);
                                 return new Response('OK', { status: 200 });
                             }
                             
                             const chatIdStr = String(chatId);
                             const timestamp = Math.floor(Date.now() / 1000);
-                            // Create a short, unique key: v_<chatId prefix>_<timestamp>
                             const videoKey = `v_${chatIdStr.substring(0, 8)}_${timestamp}`; 
 
-                            const qualityMap = {};
+                            // Available qualities for buttons
                             const availableQualities = [];
-
-                            // Populate qualityMap and availableQualities
                             videoData.available_formats.forEach(format => {
-                                if (!qualityMap[format.quality]) {
-                                    let decodedUrl = format.url.replace(/&amp;/g, '&');
-                                    qualityMap[format.quality] = decodedUrl;
+                                if (!availableQualities.includes(format.quality)) {
                                     availableQualities.push(format.quality);
                                 }
                             });
@@ -522,10 +536,11 @@ export default {
                                 return aSort - bSort;
                             });
 
-                            // Store essential data (URL map and title) in KV. Expires after 3600 seconds (1 hour).
+                            // ⭐️ KV තුළ මුල් Link එක පමණක් ගබඩා කරයි (Download Links නොවේ)
                             const kvData = { 
                                 title: videoTitle, 
-                                qualityMap: qualityMap 
+                                originalLink: text, // ⭐️ මුල් Facebook Link එක
+                                availableQualities: availableQualities
                             };
                             
                             await handlers.kv.put(videoKey, JSON.stringify(kvData), { expirationTtl: 3600 });
@@ -543,13 +558,13 @@ export default {
                             await handlers.sendMessage(
                                 chatId,
                                 `${htmlBold('🎥 Video Quality එකක් තෝරන්න:')}\n${videoTitle}`,
-                                photoMessageId ? null : messageId, // Thumbnail එක ගියේ නම් reply කරන්න එපා
+                                photoMessageId ? null : messageId, 
                                 qualityButtons  
                             );
                             
                             console.log("[SUCCESS] Quality selection buttons prepared and sent.");
                         } else {
-                            // Format සොයා ගැනීමට නොහැකි වූ විට
+                            // No formats found error
                             const errorText = htmlBold('❌ වීඩියෝ බාගත කිරීමේ Format සොයා ගැනීමට නොහැකි විය. කරුණාකර නැවත උත්සහා කරන්න.');
                             if (initialMessage && !rawThumbnailLink) {
                                 await handlers.editMessageText(chatId, initialMessage, errorText);
@@ -562,7 +577,7 @@ export default {
                         console.error(`[ERROR] API Error (Chat ID: ${chatId}):`, apiError);
                         const errorText = htmlBold('❌ Video තොරතුරු ලබා ගැනීමේ දෝෂයක් ඇති විය. කරුණාකර නැවත උත්සහා කරන්න. (API Failed)');
                         if (initialMessage) {
-                            await handlers.editMessageText(chatId, initialMessage, errorText); // Edit the "Searching..." message
+                            await handlers.editMessageText(chatId, initialMessage, errorText); 
                         } else {
                             await handlers.sendMessage(chatId, errorText, messageId);
                         }
