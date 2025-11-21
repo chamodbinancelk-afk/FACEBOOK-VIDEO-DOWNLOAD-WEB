@@ -1,6 +1,6 @@
 /**
  * src/index.js
- * Complete Code V49 (Adds Callback Query Handling, deleteMessage, editMessageText, and answerCallbackQuery)
+ * Complete Code V50 (Fixes BUTTON_DATA_INVALID error by using Cloudflare KV for temporary storage)
  * Developer: @chamoddeshan
  */
 
@@ -28,11 +28,14 @@ class WorkerHandlers {
     
     constructor(env) {
         this.env = env;
+        // Access KV binding named 'USER_DATABASE' as per wrangler.toml
+        this.kv = env.USER_DATABASE; 
+        if (!this.kv) {
+            console.error("[CRITICAL] KV Binding (USER_DATABASE) is not available in environment.");
+        }
     }
     
-    // --- Telegram API Helpers ---
-
-    // 🚩 FIX: Added inlineKeyboard parameter and included reply_markup in the API call.
+    // --- Telegram API Helpers (sendMessage remains the same) ---
     async sendMessage(chatId, text, replyToMessageId, inlineKeyboard = null) {
         try {
             const response = await fetch(`${telegramApi}/sendMessage`, {
@@ -49,6 +52,10 @@ class WorkerHandlers {
             });
             const result = await response.json();
             if (!response.ok) {
+                // Check for BUTTON_DATA_INVALID specifically and log detail
+                if (result.description === "Bad Request: BUTTON_DATA_INVALID") {
+                     console.error(`[ERROR] sendMessage API Failed: BUTTON_DATA_INVALID. Callback data length likely exceeded 64 bytes.`);
+                }
                 console.error(`sendMessage API Failed (Chat ID: ${chatId}):`, result);
                 return null;
             }
@@ -220,6 +227,7 @@ export default {
             return new Response('Hello, I am your FDOWN Telegram Worker Bot.', { status: 200 });
         }
         
+        // KV binding (USER_DATABASE) is passed in the env object
         const handlers = new WorkerHandlers(env);
         
         try {
@@ -232,7 +240,7 @@ export default {
                 const messageId = callbackQuery.message.message_id;
                 const data = callbackQuery.data; 
 
-                // Check if it's a download request
+                // Check if it's a download request (Format: dl_videoKey_quality)
                 if (data.startsWith('dl_')) {
                     
                     const parts = data.split('_');
@@ -241,9 +249,8 @@ export default {
                         return new Response('OK', { status: 200 });
                     }
                     
-                    const quality = parts[1];
-                    const encodedUrl = parts.slice(2).join('_');
-                    const videoUrl = decodeURIComponent(encodedUrl);
+                    const quality = parts.pop(); // Last part is quality
+                    const videoKey = parts[1]; // Second part is videoKey
 
                     // 1. Acknowledge and Update the Button Message
                     const loadingText = htmlBold(`🔄 ${quality} වීඩියෝව බාගත කිරීම ආරම්භ වේ...`);
@@ -251,22 +258,40 @@ export default {
                     await handlers.answerCallbackQuery(callbackQuery.id, `Starting ${quality} download...`);
 
                     try {
-                        // 2. Re-fetch video info
-                        const videoData = await fetchVideoInfo(videoUrl);
+                        let downloadLink = null;
+                        let videoTitle = 'Facebook Video';
                         
-                        // 3. Find the selected format URL
-                        const selectedFormat = (videoData.available_formats || []).find(f => f.quality.toUpperCase() === quality.toUpperCase());
+                        // --- KV Read and Process Logic ---
+                        if (!handlers.kv) {
+                            throw new Error("KV Database not available for download.");
+                        }
+
+                        // Retrieve data from KV
+                        const kvDataString = await handlers.kv.get(videoKey);
+                        if (!kvDataString) {
+                            await handlers.editMessageText(chatId, messageId, htmlBold('❌ වීඩියෝ තොරතුරු කල් ඉකුත් වී ඇත. නැවත සබැඳිය එවන්න.'));
+                            return new Response('OK', { status: 200 });
+                        }
                         
-                        if (!selectedFormat || !selectedFormat.url) {
-                            await handlers.editMessageText(chatId, messageId, htmlBold(`❌ ${quality} වීඩියෝ ලින්ක් එක සොයා ගැනීමට නොහැකි විය.`));
+                        const kvData = JSON.parse(kvDataString);
+                        videoTitle = kvData.title || videoTitle;
+                        downloadLink = kvData.qualityMap[quality];
+
+                        // Delete KV entry immediately after reading
+                        await handlers.kv.delete(videoKey);
+                        console.log(`[SUCCESS] KV cache cleared for key: ${videoKey}`);
+                        // --- End KV Read and Process Logic ---
+                        
+                        if (!downloadLink) {
+                            await handlers.editMessageText(chatId, messageId, htmlBold(`❌ ${quality} වීඩියෝ ලින්ක් එක සොයා ගැනීමට නොහැකි විය (KV Link Missing).`));
                             return new Response('OK', { status: 200 });
                         }
 
-                        const downloadLink = selectedFormat.url.replace(/&amp;/g, '&');
-                        const videoTitle = videoData.video_info?.title || videoData.title || (videoData.data && videoData.data.title) || 'Facebook Video';
-                        
                         // 4. Send the Video
                         const caption = `${htmlBold(videoTitle)}\n\n📥 ${quality} Video Downloaded!`;
+                        // Remove '&amp;' from URL for sendVideo API
+                        downloadLink = downloadLink.replace(/&amp;/g, '&'); 
+                        
                         const sentVideoId = await handlers.sendVideo(chatId, downloadLink, caption);
 
                         if (sentVideoId) {
@@ -282,7 +307,7 @@ export default {
                         }
 
                     } catch (e) {
-                        console.error("[ERROR] Download Callback API Error:", e);
+                        console.error("[ERROR] Download Callback API Error (KV/Send):", e);
                         await handlers.editMessageText(chatId, messageId, htmlBold('⚠️ වීඩියෝව බාගත කිරීමේ දෝෂයක්. කරුණාකර නැවත උත්සහා කරන්න.'));
                     }
                 }
@@ -306,14 +331,14 @@ export default {
 
             // --- 1. /start command Handling ---
             if (text && text.toLowerCase().startsWith('/start')) {
-                const userText = `👋 <b>නමස්කාර ${userName}!</b> 💁‍♂️ මෙම Bot එක දැනට <b>Thumbnail Testing Mode</b> එකේ ක්‍රියාත්මක වේ.
+                const userText = `👋 <b>නමස්කාර ${userName}!</b> 💁‍♂️ මෙය Facebook වීඩියෝ බාගත කිරීමේ Bot එකයි.
                 
-කරුණාකර Thumbnail ක්‍රියාකාරිත්වය (functionality) පරීක්ෂා කිරීමට Facebook Video link එකක් එවන්න.`;
+කරුණාකර Facebook Video link එකක් එවන්න.`;
                 await handlers.sendMessage(chatId, userText, messageId);
                 return new Response('OK', { status: 200 });
             }
 
-            // --- 2. Facebook Link Handling (Thumbnail Test Only) ---
+            // --- 2. Facebook Link Handling ---
             if (text) { 
                 const isLink = /^https?:\/\/(www\.)?(facebook\.com|fb\.watch|fb\.me)/i.test(text);
                 
@@ -418,20 +443,55 @@ export default {
                             
                             // Send quality selection buttons after thumbnail
                             if (videoData.available_formats && videoData.available_formats.length > 0) {
-                                const encodedUrl = encodeURIComponent(text); // Encode full link for callback data
+                                
+                                // --- KV Logic Start: Store data and use short key in callback_data ---
+                                if (!handlers.kv) {
+                                    console.error("[CRITICAL] USER_DATABASE KV binding is missing. Cannot proceed with short callbacks.");
+                                    await handlers.sendMessage(chatId, htmlBold('❌ දත්ත ගබඩාව (KV) නොමැත. කරුණාකර Bot සකස් කරන්න.'), messageId);
+                                    return new Response('OK', { status: 200 });
+                                }
+                                
+                                const chatIdStr = String(chatId);
+                                const timestamp = Math.floor(Date.now() / 1000);
+                                // Create a short, unique key: v_<chatId prefix>_<timestamp>
+                                const videoKey = `v_${chatIdStr.substring(0, 8)}_${timestamp}`; 
+
+                                const qualityMap = {};
+                                const availableQualities = [];
+
+                                // Populate qualityMap and availableQualities
+                                videoData.available_formats.forEach(format => {
+                                    if (!qualityMap[format.quality]) {
+                                        let decodedUrl = format.url.replace(/&amp;/g, '&');
+                                        qualityMap[format.quality] = decodedUrl;
+                                        availableQualities.push(format.quality);
+                                    }
+                                });
+
+                                // Store essential data (URL map and title) in KV. Expires after 3600 seconds (1 hour).
+                                const kvData = { 
+                                    title: videoTitle, 
+                                    qualityMap: qualityMap 
+                                };
+                                
+                                await handlers.kv.put(videoKey, JSON.stringify(kvData), { expirationTtl: 3600 });
+                                console.log(`[SUCCESS] Data stored in KV with key: ${videoKey}`);
                                 
                                 // Create buttons: [[B1], [B2], [B3], ...] - each button on a new row.
-                                const qualityButtons = videoData.available_formats.map(format => [{
-                                    text: `📥 Download ${format.quality}`,
-                                    callback_data: `dl_${format.quality}_${encodedUrl}` 
+                                const qualityButtons = availableQualities.map(quality => [{
+                                    text: `📥 Download ${quality}`,
+                                    // Use the short key and quality for the callback data
+                                    callback_data: `dl_${videoKey}_${quality}` 
                                 }]);
                                 
+                                // --- KV Logic End ---
+
                                 // Send the message with the inline keyboard
                                 await handlers.sendMessage(
                                     chatId,
                                     `${htmlBold('🎥 Video Quality එකක් තෝරන්න:')}\n${videoTitle}`,
                                     null, // No reply_to_message_id for this message
-                                    qualityButtons // 🚩 FIX: Passing the inline keyboard here
+                                    qualityButtons 
                                 );
                                 
                                 console.log("[SUCCESS] Quality selection buttons prepared and sent.");
