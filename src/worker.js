@@ -1,312 +1,476 @@
 /**
- * src/worker.js
- * Cloudflare Worker for Facebook Download Bot using grammY.
- * Handles Telegram Webhook requests.
- * * NOTE: The BOT_TOKEN is hardcoded here, which is NOT RECOMMENDED for production 
- * environments. Please replace '<YOUR_ACTUAL_BOT_TOKEN_HERE>' with your token.
+ * src/index.js
+ * Complete Code V49 (Adds Callback Query Handling, deleteMessage, editMessageText, and answerCallbackQuery)
+ * Developer: @chamoddeshan
  */
 
-import { Bot, webhookCallback, InlineKeyboard } from 'grammy';
+// *****************************************************************
+// ********** [ 1. Configurations and Constants ] ********************
+// *****************************************************************
+const BOT_TOKEN = '8382727460:AAEgKVISJN5TTuV4O-82sMGQDG3khwjiKR8'; 
+const OWNER_ID = '1901997764'; 
+// *****************************************************************
 
-// ----------------------------------------------------------------------
-// IMPORTANT: REPLACE THE PLACEHOLDER BELOW WITH YOUR ACTUAL BOT TOKEN
-// ----------------------------------------------------------------------
-const BOT_TOKEN = "8382727460:AAEgKVISJN5TTuV4O-82sMGQDG3khwjiKR8"; 
-// ----------------------------------------------------------------------
+// Telegram API Base URL
+const telegramApi = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
-const API_URL = "https://fdown.isuru.eu.org/info";
-const bot = new Bot(BOT_TOKEN);
+// --- Helper Functions ---
 
-// The KV Binding name is updated to USER_DATABASE as per your request.
-// globalThis.USER_DATABASE will be automatically available via 'env' object.
-
-// Helper function for HTML bold text
 function htmlBold(text) {
     return `<b>${text}</b>`;
 }
 
-// Helper function to safely delete a message
-async function safeDeleteMessage(ctx, messageId) {
-    try {
-        ctx.api.deleteMessage(ctx.chat.id, messageId);
-    } catch (e) {
-        console.error(`[WARN] Failed to delete message ${messageId}:`, e.message);
+// *****************************************************************
+// ********** [ 2. WorkerHandlers Class ] ****************************
+// *****************************************************************
+
+class WorkerHandlers {
+    
+    constructor(env) {
+        this.env = env;
+    }
+    
+    // --- Telegram API Helpers ---
+
+    async sendMessage(chatId, text, replyToMessageId) {
+        try {
+            const response = await fetch(`${telegramApi}/sendMessage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    chat_id: chatId,
+                    text: text, 
+                    parse_mode: 'HTML', 
+                    ...(replyToMessageId && { reply_to_message_id: replyToMessageId }),
+                }),
+            });
+            const result = await response.json();
+            if (!response.ok) {
+                console.error(`sendMessage API Failed (Chat ID: ${chatId}):`, result);
+                return null;
+            }
+            return result.result.message_id;
+        } catch (e) { 
+            console.error(`sendMessage Fetch Error (Chat ID: ${chatId}):`, e);
+            return null;
+        }
+    }
+
+    // --- sendPhoto (Send thumbnail with caption) ---
+    async sendPhoto(chatId, photoUrl, replyToMessageId, caption = null) { 
+        try {
+            console.log(`[INFO] Attempting to send photo from URL: ${photoUrl.substring(0, 50)}...`);
+            const response = await fetch(`${telegramApi}/sendPhoto`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    chat_id: chatId,
+                    photo: photoUrl,
+                    reply_to_message_id: replyToMessageId,
+                    caption: caption || htmlBold("✅ Thumbnail Downloaded!"),
+                    parse_mode: 'HTML',
+                }),
+            });
+            const result = await response.json();
+            if (response.ok) {
+                console.log("[SUCCESS] sendPhoto successful.");
+                return result.result.message_id; 
+            }
+            console.error(`[ERROR] sendPhoto API Failed (Chat ID: ${chatId}):`, result);
+            return null;
+        } catch (e) {
+            console.error(`[ERROR] sendPhoto Fetch Error (Chat ID: ${chatId}):`, e);
+            return null;
+        }
+    }
+
+    // --- sendVideo (Send video directly from URL) ---
+    async sendVideo(chatId, videoUrl, caption = null) {
+        try {
+            console.log(`[INFO] Sending video from URL: ${videoUrl.substring(0, 50)}...`);
+            const response = await fetch(`${telegramApi}/sendVideo`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    chat_id: chatId,
+                    video: videoUrl,
+                    caption: caption || htmlBold("✅ Video Downloaded!"),
+                    parse_mode: 'HTML',
+                }),
+            });
+            const result = await response.json();
+            if (response.ok) {
+                console.log("[SUCCESS] sendVideo successful.");
+                return result.result.message_id;
+            }
+            console.error(`[ERROR] sendVideo API Failed (Chat ID: ${chatId}):`, result);
+            return null;
+        } catch (e) {
+            console.error(`[ERROR] sendVideo Fetch Error (Chat ID: ${chatId}):`, e);
+            return null;
+        }
+    }
+
+    // --- answerCallbackQuery (Acknowledge and dismiss button loading) ---
+    async answerCallbackQuery(callbackQueryId, text = null) {
+        try {
+            await fetch(`${telegramApi}/answerCallbackQuery`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    callback_query_id: callbackQueryId,
+                    ...(text && { text: text }),
+                    show_alert: false, // Use true for serious errors
+                    cache_time: 0
+                }),
+            });
+            return true;
+        } catch (e) {
+            console.error(`[ERROR] answerCallbackQuery error:`, e);
+            return false;
+        }
+    }
+
+    // --- editMessageText (Edit the text of a message) ---
+    async editMessageText(chatId, messageId, text, inlineKeyboard = null) {
+        try {
+            const response = await fetch(`${telegramApi}/editMessageText`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    chat_id: chatId,
+                    message_id: messageId,
+                    text: text,
+                    parse_mode: 'HTML',
+                    ...(inlineKeyboard !== null && { reply_markup: { inline_keyboard: inlineKeyboard } }),
+                }),
+            });
+            const result = await response.json();
+            if (response.ok) {
+                console.log("[SUCCESS] editMessageText successful.");
+                return true;
+            }
+            // Non-fatal error log for edits
+            console.warn(`[WARN] editMessageText failed for ${messageId}:`, result);
+            return false;
+        } catch (e) {
+            console.error(`[ERROR] editMessageText error:`, e);
+            return false;
+        }
+    }
+
+    // --- deleteMessage (Delete a previous message) ---
+    async deleteMessage(chatId, messageId) {
+        if (!messageId) return false;
+        try {
+            const response = await fetch(`${telegramApi}/deleteMessage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    chat_id: chatId,
+                    message_id: messageId,
+                }),
+            });
+            if (response.ok) {
+                console.log(`[SUCCESS] Deleted message ${messageId} in chat ${chatId}.`);
+                return true;
+            }
+            console.warn(`[WARN] deleteMessage failed for ${messageId}:`, await response.json());
+            return false;
+        } catch (e) {
+            console.error(`[ERROR] deleteMessage error for ${messageId}:`, e);
+            return false;
+        }
     }
 }
 
-// --- START COMMAND ---
-bot.command('start', async (ctx) => {
-    const userName = ctx.from?.first_name || "පරිශීලක";
-    const userText = `👋 <b>සුභ දවසක් ${userName} මහත්මයා/මහත්මිය!</b> 💁‍♂️ මෙය Facebook වීඩියෝ බාගත කිරීමේ Bot එකයි.
+
+// *****************************************************************
+// ********** [ 3. Main Fetch Handler ] ******************************
+// *****************************************************************
+
+async function fetchVideoInfo(link) {
+    const apiUrl = "https://fdown.isuru.eu.org/info";
     
-කරුණාකර Facebook වීඩියෝ Link එකක් එවන්න.`;
-    await ctx.reply(userText, { parse_mode: 'HTML' });
-});
-
-// --- MESSAGE HANDLER (Link Processing) ---
-bot.on('message:text', async (ctx) => {
-    const text = ctx.message.text.trim();
-    const isLink = /^https?:\/\/(www\.)?(facebook\.com|fb\.watch|fb\.me)/i.test(text);
-    const chatId = ctx.chat.id;
-
-    if (!isLink) {
-        await ctx.reply(htmlBold('❌ කරුණාකර වලංගු Facebook වීඩියෝ Link එකක් එවන්න.'), { parse_mode: 'HTML' });
-        return;
+    const apiResponse = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'User-Agent': 'CloudflareWorker/1.0'
+        },
+        body: JSON.stringify({ url: link })
+    });
+    
+    if (!apiResponse.ok) {
+        throw new Error(`API request failed with status ${apiResponse.status}`);
     }
     
-    // Send initial acknowledgement
-    let initialMsg;
-    try {
-        initialMsg = await ctx.reply(htmlBold('⏳ වීඩියෝ තොරතුරු සොයමින්...'), { 
-            parse_mode: 'HTML',
-            reply_to_message_id: ctx.message.message_id
-        });
-    } catch (e) {
-        console.error("Failed to send initial message:", e.message);
-        return;
-    }
+    return apiResponse.json();
+}
 
-    try {
-        // Fetch video data
-        const apiResponse = await fetch(API_URL, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'User-Agent': 'TelegramBot/Worker' // Cloudflare Worker User-Agent
-            },
-            body: JSON.stringify({ url: text })
-        });
-        
-        if (!apiResponse.ok) {
-            throw new Error(`API request failed with status ${apiResponse.status}`);
-        }
-        
-        const videoData = await apiResponse.json();
-        
-        // Extract required information
-        let rawThumbnailLink = null;
-        let videoTitle = 'Facebook Video';
-        let duration = null;
-        
-        if (videoData.video_info) {
-            rawThumbnailLink = videoData.video_info.thumbnail?.replace(/&amp;/g, '&');
-            videoTitle = videoData.video_info.title || videoTitle;
-            duration = videoData.video_info.duration;
-        } else if (videoData.thumbnail) {
-            rawThumbnailLink = videoData.thumbnail.replace(/&amp;/g, '&');
-        } else if (videoData.data && videoData.data.thumbnail) {
-            rawThumbnailLink = videoData.data.thumbnail.replace(/&amp;/g, '&');
-        }
-        
-        if (!videoTitle && videoData.title) {
-            videoTitle = videoData.title;
-        } else if (!videoTitle && videoData.data && videoData.data.title) {
-            videoTitle = videoData.data.title;
-        }
-
-        // --- 1. Send Thumbnail and Details ---
-        if (rawThumbnailLink) {
-            try {
-                let durationText = duration ? `${Math.floor(duration / 60)}:${(Math.floor(duration % 60)).toString().padStart(2, '0')}` : '';
-                
-                let caption = `${htmlBold(videoTitle)}\n\n`;
-                if (durationText) caption += `⏱️ කාලය: ${durationText}\n`;
-                caption += `\n✅ ${htmlBold('Thumbnail බාගත කිරීම සාර්ථකයි!')}`;
-                
-                await ctx.replyWithPhoto(rawThumbnailLink, {
-                    caption: caption,
-                    parse_mode: 'HTML',
-                    reply_to_message_id: ctx.message.message_id
-                });
-                
-                await safeDeleteMessage(ctx, initialMsg.message_id);
-
-            } catch (photoError) {
-                console.error('[ERROR] Failed to send photo:', photoError.message);
-                await safeDeleteMessage(ctx, initialMsg.message_id);
-                await ctx.reply(htmlBold('❌ Thumbnail එක යැවීම අසාර්ථක විය.'), { parse_mode: 'HTML' });
-                return;
-            }
-        } else {
-            const errorText = htmlBold('⚠️ සමාවෙන්න, මේ වීඩියෝ එකේ Thumbnail එක සොයා ගැනීමට නොහැකි විය.');
-            await safeDeleteMessage(ctx, initialMsg.message_id);
-            await ctx.reply(errorText, { parse_mode: 'HTML' });
-            return;
-        }
-
-        // --- 2. Store Data in KV and Send Quality Selection Buttons ---
-        if (videoData.available_formats && videoData.available_formats.length > 0) {
-            
-            const qualityMap = {};
-            const availableQualities = [];
-
-            // Populate qualityMap and availableQualities, ensuring URL decoding
-            videoData.available_formats.forEach(format => {
-                if (!qualityMap[format.quality]) {
-                    let decodedUrl = format.url.replace(/&amp;/g, '&');
-                    qualityMap[format.quality] = decodedUrl;
-                    availableQualities.push(format.quality);
-                }
-            });
-            
-            // Use a short, unique key (e.g., chat ID + current timestamp, but simplified)
-            const videoKey = `v${chatId}_${Math.floor(Date.now() / 1000)}`; 
-            
-            // Store ONLY the essential data (URL map and title) in KV. Expires after 3600 seconds (1 hour).
-            // USER_DATABASE is the binding name from wrangler.toml
-            const kvData = { 
-                title: videoTitle, 
-                qualityMap: qualityMap 
-            };
-            
-            // Store in KV using the bound name USER_DATABASE
-            // This relies on the env binding being set in the fetch handler
-            await env.USER_DATABASE.put(videoKey, JSON.stringify(kvData), { expirationTtl: 3600 });
-            
-            // Create inline keyboard buttons
-            const inlineKeyboard = new InlineKeyboard();
-            availableQualities.forEach(quality => {
-                // Callback format: dl_<videoKey>_<quality>
-                inlineKeyboard.add({ text: `📥 ${quality} බාගත කරන්න`, callback_data: `dl_${videoKey}_${quality}` });
-            });
-            
-            await ctx.reply(`${htmlBold('🎥 වීඩියෝ Quality එකක් තෝරන්න:')}\n\n${videoTitle}`, {
-                parse_mode: 'HTML',
-                reply_markup: inlineKeyboard
-            });
-            console.log(`[SUCCESS] Data stored in KV with key: ${videoKey}`);
-        }
-        
-    } catch (apiError) {
-        console.error(`[ERROR] API Error:`, apiError);
-        await safeDeleteMessage(ctx, initialMsg.message_id);
-        await ctx.reply(htmlBold('❌ වීඩියෝ තොරතුරු ලබා ගැනීමේ දෝෂයක් ඇති විය. කරුණාකර නැවත උත්සාහ කරන්න.') + `\n\n(දෝෂය: ${apiError.message})`, { parse_mode: 'HTML' });
-    }
-});
-
-// --- CALLBACK QUERY HANDLER (Download Button Click) ---
-bot.on('callback_query:data', async (ctx) => {
-    const callbackData = ctx.callbackQuery.data;
-    const chatId = ctx.chat.id;
-    const messageId = ctx.callbackQuery.message.message_id;
-    
-    // Check if the environment variable is available (passed via fetch handler env)
-    const USER_DATABASE = globalThis.USER_DATABASE;
-    if (!USER_DATABASE) {
-        await ctx.answerCallbackQuery({ text: '❌ Server Error: KV not initialized.' });
-        await ctx.reply(htmlBold('❌ අභ්‍යන්තර දෝෂයක්: දත්ත ගබඩාව නොමැත.'), { parse_mode: 'HTML' });
-        return;
-    }
-
-    if (callbackData.startsWith('dl_')) {
-        let processingMsg;
-        let videoUrl = ''; // Define here for fallback
-
-        try {
-            // Acknowledge the callback immediately
-            const quality = callbackData.split('_').pop();
-            await ctx.answerCallbackQuery({
-                text: `⏬ ${quality} Video Download වෙමින්...`
-            });
-            
-            // Remove buttons immediately
-            await ctx.editMessageReplyMarkup({});
-
-            // Parse callback data: dl_videoKey_quality
-            const parts = callbackData.split('_');
-            const videoKey = parts[1]; // videoKey is the second part
-            // quality is already defined above
-
-            // 1. Retrieve data from KV
-            const kvDataString = await USER_DATABASE.get(videoKey);
-            if (!kvDataString) {
-                await ctx.reply(htmlBold('❌ වීඩියෝ තොරතුරු කල් ඉකුත් වී ඇත. නැවත සබැඳිය එවන්න.'), { parse_mode: 'HTML' });
-                return;
-            }
-            const kvData = JSON.parse(kvDataString);
-            
-            const videoTitle = kvData.title;
-            videoUrl = kvData.qualityMap[quality]; // Set defined variable
-
-            if (!videoUrl) {
-                await ctx.reply(htmlBold('❌ තෝරාගත් Quality එකේ URL එක සොයාගත නොහැක.'), { parse_mode: 'HTML' });
-                return;
-            }
-            
-            // 2. Send processing message
-            processingMsg = await ctx.reply(`⏬ ${htmlBold(`${quality} Video Download වෙමින්...`)}\n\nකරුණාකර රැඳී සිටින්න...`, {
-                parse_mode: 'HTML',
-                reply_to_message_id: messageId
-            });
-            
-            // 3. Send video directly from URL
-            await ctx.replyWithVideo({
-                url: videoUrl
-            }, {
-                caption: `${htmlBold(videoTitle)}\n\n✅ Quality: ${quality}\n📥 ${htmlBold('Video Downloaded!')}`,
-                parse_mode: 'HTML'
-            });
-            
-            // 4. Cleanup: Delete processing message and KV entry
-            await safeDeleteMessage(ctx, processingMsg.message_id);
-            await USER_DATABASE.delete(videoKey);
-            console.log(`[SUCCESS] Video sent for ${quality} and KV cache cleared.`);
-
-        } catch (videoError) {
-            console.error(`[ERROR] Video send failed: ${videoError.message}`);
-            
-            if (processingMsg) {
-                await safeDeleteMessage(ctx, processingMsg.message_id);
-            }
-            
-            // Fallback: send download link
-            const fallbackLink = videoUrl || 'No URL found.';
-            const errorCaption = htmlBold('⚠️ වීඩියෝව යැවීම අසාර්ථක විය.') + `\n\nමෙම සබැඳිය භාවිතයෙන් බාගත කරන්න: <a href="${fallbackLink}">Click to Download</a>`;
-            
-            await ctx.reply(errorCaption, { 
-                parse_mode: 'HTML', 
-                link_preview_options: { is_disabled: true } 
-            });
-
-        }
-    }
-});
-
-
-// --- CLOUDFLARE WORKER EXPORT ---
-
-// Error handler for grammY to catch errors during update handling
-bot.catch((err) => {
-    const ctx = err.ctx;
-    console.error(`[ERROR] Bot error caught during update for chat ${ctx.chat?.id}:`, err.error);
-    // Silent fail in the worker environment is often preferred for non-fatal errors
-});
-
-// Configure the webhook callback for the Worker environment
-const handleUpdate = webhookCallback(bot, 'cloudflare');
 
 export default {
+    
     async fetch(request, env, ctx) {
-        // Pass the KV binding to global context for grammY bot logic access
-        // The KV namespace is accessed via 'env.USER_DATABASE'
-        globalThis.USER_DATABASE = env.USER_DATABASE; 
-
-        // Only handle POST requests from Telegram
-        if (request.method === 'POST') {
-            try {
-                // NOTE: In the modern Cloudflare Worker fetch handler (request, env, ctx),
-                // the grammY 'cloudflare' adapter expects only the 'request' object.
-                // The error "event.respondWith is not a function" often indicates an issue
-                // with the worker environment's execution model or deployment settings.
-                return await handleUpdate(request);
-            } catch (e) {
-                console.error("Webhook handling failed:", e.message, e); // Changed to log full error object
-                // Return a successful response even on internal error to prevent Telegram retries
-                return new Response('Error handling update', { status: 500 });
-            }
+        if (request.method !== 'POST') {
+            return new Response('Hello, I am your FDOWN Telegram Worker Bot.', { status: 200 });
         }
         
-        // Handle GET requests (e.g., setting webhook or status check)
-        return new Response('OK', { status: 200 });
-    },
+        const handlers = new WorkerHandlers(env);
+        
+        try {
+            const update = await request.json();
+            
+            // --- C. Inline Button Click Handling (Callback Query) ---
+            if (update.callback_query) {
+                const callbackQuery = update.callback_query;
+                const chatId = callbackQuery.message.chat.id;
+                const messageId = callbackQuery.message.message_id;
+                const data = callbackQuery.data; 
+
+                // Check if it's a download request
+                if (data.startsWith('dl_')) {
+                    
+                    const parts = data.split('_');
+                    if (parts.length < 3) {
+                        await handlers.answerCallbackQuery(callbackQuery.id, "Invalid callback data.");
+                        return new Response('OK', { status: 200 });
+                    }
+                    
+                    const quality = parts[1];
+                    const encodedUrl = parts.slice(2).join('_');
+                    const videoUrl = decodeURIComponent(encodedUrl);
+
+                    // 1. Acknowledge and Update the Button Message
+                    const loadingText = htmlBold(`🔄 ${quality} වීඩියෝව බාගත කිරීම ආරම්භ වේ...`);
+                    await handlers.editMessageText(chatId, messageId, loadingText, []); // Remove buttons
+                    await handlers.answerCallbackQuery(callbackQuery.id, `Starting ${quality} download...`);
+
+                    try {
+                        // 2. Re-fetch video info
+                        const videoData = await fetchVideoInfo(videoUrl);
+                        
+                        // 3. Find the selected format URL
+                        const selectedFormat = (videoData.available_formats || []).find(f => f.quality.toUpperCase() === quality.toUpperCase());
+                        
+                        if (!selectedFormat || !selectedFormat.url) {
+                            await handlers.editMessageText(chatId, messageId, htmlBold(`❌ ${quality} වීඩියෝ ලින්ක් එක සොයා ගැනීමට නොහැකි විය.`));
+                            return new Response('OK', { status: 200 });
+                        }
+
+                        const downloadLink = selectedFormat.url.replace(/&amp;/g, '&');
+                        const videoTitle = videoData.video_info?.title || videoData.title || (videoData.data && videoData.data.title) || 'Facebook Video';
+                        
+                        // 4. Send the Video
+                        const caption = `${htmlBold(videoTitle)}\n\n📥 ${quality} Video Downloaded!`;
+                        const sentVideoId = await handlers.sendVideo(chatId, downloadLink, caption);
+
+                        if (sentVideoId) {
+                            // 5. Success: Edit the original button message
+                            await handlers.editMessageText(
+                                chatId, 
+                                messageId, 
+                                htmlBold(`✅ ${quality} වීඩියෝව සාර්ථකව යවන ලදී!`)
+                            );
+                        } else {
+                            // 6. Failure to send video
+                            await handlers.editMessageText(chatId, messageId, htmlBold('❌ Video එක යැවීම අසාර්ථක විය. කරුණාකර නැවත උත්සහා කරන්න.'));
+                        }
+
+                    } catch (e) {
+                        console.error("[ERROR] Download Callback API Error:", e);
+                        await handlers.editMessageText(chatId, messageId, htmlBold('⚠️ වීඩියෝව බාගත කිරීමේ දෝෂයක්. කරුණාකර නැවත උත්සහා කරන්න.'));
+                    }
+                }
+                
+                return new Response('OK', { status: 200 });
+            }
+
+
+            // --- D. New Message Handling ---
+            const message = update.message;
+            
+            if (!message) {
+                 return new Response('OK', { status: 200 });
+            }
+
+            const chatId = message.chat.id;
+            const messageId = message.message_id;
+            const text = message.text ? message.text.trim() : null; 
+            
+            const userName = message.from.first_name || "User"; 
+
+            // --- 1. /start command Handling ---
+            if (text && text.toLowerCase().startsWith('/start')) {
+                const userText = `👋 <b>නමස්කාර ${userName}!</b> 💁‍♂️ මෙම Bot එක දැනට <b>Thumbnail Testing Mode</b> එකේ ක්‍රියාත්මක වේ.
+                
+කරුණාකර Thumbnail ක්‍රියාකාරිත්වය (functionality) පරීක්ෂා කිරීමට Facebook Video link එකක් එවන්න.`;
+                await handlers.sendMessage(chatId, userText, messageId);
+                return new Response('OK', { status: 200 });
+            }
+
+            // --- 2. Facebook Link Handling (Thumbnail Test Only) ---
+            if (text) { 
+                const isLink = /^https?:\/\/(www\.)?(facebook\.com|fb\.watch|fb\.me)/i.test(text);
+                
+                if (isLink) {
+                    
+                    // Initial Acknowledgement Message
+                    const initialMessage = await handlers.sendMessage(
+                        chatId, 
+                        htmlBold('⏳ Video තොරතුරු සොයමින්...'), 
+                        messageId
+                    );
+                    
+                    try {
+                        // Use Facebook Video Download API
+                        const videoData = await fetchVideoInfo(text);
+                        
+                        console.log(`[DEBUG] API Response:`, JSON.stringify(videoData));
+                        
+                        // Extract information
+                        let rawThumbnailLink = null;
+                        let videoTitle = 'Facebook Video';
+                        let duration = null;
+                        let uploader = null;
+                        let viewCount = null;
+                        let uploadDate = null;
+                        
+                        if (videoData.video_info) {
+                            if (videoData.video_info.thumbnail) {
+                                rawThumbnailLink = videoData.video_info.thumbnail.replace(/&amp;/g, '&');
+                            }
+                            if (videoData.video_info.title) {
+                                videoTitle = videoData.video_info.title;
+                            }
+                            // ... other video_info fields (duration, uploader, view_count, upload_date)
+                            duration = videoData.video_info.duration;
+                            uploader = videoData.video_info.uploader;
+                            viewCount = videoData.video_info.view_count;
+                            uploadDate = videoData.video_info.upload_date;
+                            
+                        } else if (videoData.thumbnail) {
+                            rawThumbnailLink = videoData.thumbnail.replace(/&amp;/g, '&');
+                        } else if (videoData.data && videoData.data.thumbnail) {
+                            rawThumbnailLink = videoData.data.thumbnail.replace(/&amp;/g, '&');
+                        }
+                        
+                        if (!videoTitle && videoData.title) {
+                            videoTitle = videoData.title;
+                        } else if (!videoTitle && videoData.data && videoData.data.title) {
+                            videoTitle = videoData.data.title;
+                        }
+                        
+                        console.log(`[DEBUG] Thumbnail URL: ${rawThumbnailLink}`);
+                        console.log(`[DEBUG] Video Title: ${videoTitle}`);
+
+                        // Send Photo or Error
+                        if (rawThumbnailLink) {
+                            // Format duration (seconds to MM:SS)
+                            let durationText = '';
+                            if (duration) {
+                                const minutes = Math.floor(duration / 60);
+                                const seconds = Math.floor(duration % 60);
+                                durationText = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+                            }
+                            
+                            // Format view count with commas
+                            let viewCountText = '';
+                            if (viewCount) {
+                                viewCountText = viewCount.toLocaleString();
+                            }
+                            
+                            // Format upload date (YYYYMMDD to readable format)
+                            let uploadDateText = '';
+                            if (uploadDate && uploadDate.length === 8) {
+                                const year = uploadDate.substring(0, 4);
+                                const month = uploadDate.substring(4, 6);
+                                const day = uploadDate.substring(6, 8);
+                                uploadDateText = `${year}-${month}-${day}`;
+                            }
+                            
+                            // Build caption with all information
+                            let caption = `${htmlBold(videoTitle)}\n\n`;
+                            if (uploader) caption += `👤 ${uploader}\n`;
+                            if (durationText) caption += `⏱️ Duration: ${durationText}\n`;
+                            if (viewCountText) caption += `👁️ Views: ${viewCountText}\n`;
+                            if (uploadDateText) caption += `📅 Uploaded: ${uploadDateText}\n`;
+                            caption += `\n✅ ${htmlBold('Thumbnail Downloaded!')}`;
+                            
+                            const photoMessageId = await handlers.sendPhoto(
+                                chatId, 
+                                rawThumbnailLink, 
+                                messageId,
+                                caption
+                            );
+                            
+                            if (photoMessageId && initialMessage) {
+                                // Delete the initial "Searching..." message
+                                handlers.deleteMessage(chatId, initialMessage); 
+                                console.log("[SUCCESS] Thumbnail sent successfully and temporary message deleted.");
+                            } else if (!photoMessageId) {
+                                await handlers.sendMessage(chatId, htmlBold('❌ Thumbnail එක යැවීම අසාර්ථක විය. කරුණාකර වෙනත් Link එකක් උත්සහා කරන්න.'), messageId);
+                            }
+                            
+                            // Send quality selection buttons after thumbnail
+                            if (videoData.available_formats && videoData.available_formats.length > 0) {
+                                const encodedUrl = encodeURIComponent(text); // Encode full link for callback data
+                                
+                                const qualityButtons = videoData.available_formats.map(format => [{
+                                    text: `📥 Download ${format.quality}`,
+                                    // CRITICAL FIX: Encode the full URL into the callback data
+                                    callback_data: `dl_${format.quality}_${encodedUrl}` 
+                                }]);
+                                
+                                await handlers.sendMessage(
+                                    chatId,
+                                    `${htmlBold('🎥 Video Quality එකක් තෝරන්න:')}`,
+                                    messageId
+                                );
+                                
+                                // Telegram only allows inline keyboards on the message they are replied to or the message itself
+                                await handlers.sendMessage(
+                                    chatId,
+                                    `Select download quality for: ${htmlBold(videoTitle)}`,
+                                    null, // Don't reply to user message to keep the thread cleaner
+                                    qualityButtons // Use reply_markup
+                                );
+                                
+                                console.log("[SUCCESS] Quality selection buttons prepared");
+                            }
+
+                        } else {
+                            console.error(`[ERROR] Thumbnail not found in API response for: ${text}`);
+                            const errorText = htmlBold('⚠️ සමාවෙන්න, මේ Video එකේ Thumbnail එක සොයා ගැනීමට නොහැකි විය.');
+                            if (initialMessage) {
+                                await handlers.editMessageText(chatId, initialMessage, errorText); // Edit the "Searching..." message
+                            } else {
+                                await handlers.sendMessage(chatId, errorText, messageId);
+                            }
+                        }
+                        
+                    } catch (apiError) {
+                        console.error(`[ERROR] API Error (Chat ID: ${chatId}):`, apiError);
+                        const errorText = htmlBold('❌ Video තොරතුරු ලබා ගැනීමේ දෝෂයක් ඇති විය. කරුණාකර නැවත උත්සහා කරන්න.');
+                        if (initialMessage) {
+                            await handlers.editMessageText(chatId, initialMessage, errorText); // Edit the "Searching..." message
+                        } else {
+                            await handlers.sendMessage(chatId, errorText, messageId);
+                        }
+                    }
+                    
+                } else {
+                    await handlers.sendMessage(chatId, htmlBold('❌ කරුණාකර වලංගු Facebook වීඩියෝ Link එකක් එවන්න.'), messageId);
+                }
+            } 
+            
+            return new Response('OK', { status: 200 });
+
+        } catch (e) {
+            console.error("--- FATAL FETCH ERROR (Worker Logic Error) ---");
+            console.error("The worker failed to process the update: " + e.message);
+            console.error("-------------------------------------------------");
+            return new Response('OK', { status: 200 }); 
+        }
+    }
 };
