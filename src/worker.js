@@ -1,8 +1,8 @@
 /**
  * src/index.js
- * Complete Code Hybrid V62 (Metadata/Duration Fix + V34 Admin Panel/Broadcast/Progress)
+ * Complete Code Hybrid V63 (Large Video Download Link Feature Added)
  * Developer: @chamoddeshan
- * NOTE: This hybrid code combines the working metadata logic (V61) with the V34 Admin/Broadcast features.
+ * NOTE: This hybrid code combines V62 features with the new large file link handling.
  */
 
 // *****************************************************************
@@ -11,6 +11,9 @@
 const BOT_TOKEN = '8382727460:AAEgKVISJN5TTuV4O-82sMGQDG3khwjiKR8'; 
 const OWNER_ID = '1901997764'; 
 const API_URL = "https://fdown.isuru.eu.org/info"; // JSON API for Metadata/Thumbnail
+
+// --- NEW CONSTANT: Max file size for direct Telegram upload (50 MB in Bytes) ---
+const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024; 
 // *****************************************************************
 
 // Telegram API Base URL
@@ -218,6 +221,31 @@ class WorkerHandlers {
             console.error("answerCallbackQuery failed:", e);
         }
     }
+    
+    // --- NEW: Send Download Link for Large Videos (V63 Addition) ---
+    async sendLinkMessage(chatId, videoUrl, caption, replyToMessageId) {
+        // Create an inline keyboard with the download link
+        const inlineKeyboard = [
+            [{ text: '🔽 වීඩියෝව බාගත කරන්න (Download Video)', url: videoUrl }],
+            [{ text: 'C D H Corporation © ✅', callback_data: 'ignore_c_d_h' }] 
+        ];
+
+        // Extracts the bolded title from the caption for a cleaner message
+        // This is a simplification; in a real scenario, you'd extract the title more robustly.
+        const titleMatch = caption.match(/<b>(.*?)<\/b>/);
+        const videoTitle = titleMatch ? titleMatch[1] : 'Video File';
+        
+        const largeFileMessage = htmlBold("⚠️ විශාල ගොනුවක් හඳුනා ගැනේ.") + `\n\n`
+                               + `දැනට පවතින සීමාවන් (${MAX_FILE_SIZE_BYTES / (1024 * 1024)}MB) නිසා වීඩියෝව කෙලින්ම යැවිය නොහැක. ඒ වෙනුවට, පහත බොත්තම භාවිතා කර බාගත කරන්න.\n\n`
+                               + htmlBold("Title:") + ` ${videoTitle}`; 
+
+        await this.sendMessage(
+            chatId, 
+            largeFileMessage, 
+            replyToMessageId, 
+            inlineKeyboard
+        );
+    }
 
     // --- sendVideo (With 403 Fix Headers) ---
     async sendVideo(chatId, videoUrl, caption = null, replyToMessageId, thumbnailLink = null, inlineKeyboard = null) {
@@ -404,7 +432,7 @@ class WorkerHandlers {
 // *****************************************************************
 
 /**
- * Function 1: Get Thumbnail/Title/Metadata from JSON API (From V61)
+ * Function 1: Get Thumbnail/Title/Metadata from JSON API (V63: Filesize added)
  */
 async function getApiMetadata(link) {
     try {
@@ -431,6 +459,7 @@ async function getApiMetadata(link) {
         let duration = 0;
         let views = 0;
         let uploadDate = 'N/A';
+        let filesize = 0; // <<< NEW: Add filesize variable
         
         if (info) {
             if (info.thumbnail) {
@@ -443,6 +472,7 @@ async function getApiMetadata(link) {
             duration = info.duration || 0;
             views = info.view_count || info.views || 0;
             uploadDate = info.upload_date || 'N/A';
+            filesize = info.filesize || 0; // <<< NEW: Retrieve filesize (assuming API returns it in bytes)
         }
 
         return {
@@ -451,7 +481,8 @@ async function getApiMetadata(link) {
             uploader: uploader,
             duration: duration,
             views: views,
-            uploadDate: uploadDate
+            uploadDate: uploadDate,
+            filesize: filesize // <<< NEW: Return filesize
         };
 
     } catch (e) {
@@ -462,7 +493,8 @@ async function getApiMetadata(link) {
             uploader: 'Unknown Uploader',
             duration: 0,
             views: 0,
-            uploadDate: 'N/A'
+            uploadDate: 'N/A',
+            filesize: 0 // <<< NEW: Default to 0
         };
     }
 }
@@ -665,7 +697,7 @@ export default {
                     return new Response('OK', { status: 200 });
                 }
 
-                // C. Facebook Link Handling (Hybrid Logic - V61)
+                // C. Facebook Link Handling (Hybrid Logic - V63)
                 if (text) { 
                     const isLink = /^https?:\/\/(www\.)?(facebook\.com|fb\.watch|fb\.me)/i.test(text);
                     
@@ -686,7 +718,7 @@ export default {
                         
                         // 2. Start Scraping and Fetching
                         try {
-                            // Fetch Metadata (Title/Uploader/Date/Duration) from API
+                            // Fetch Metadata (Title/Uploader/Date/Duration/Filesize) from API
                             const apiData = await getApiMetadata(text);
                             const finalCaption = formatCaption(apiData);
                             
@@ -698,23 +730,39 @@ export default {
                             const finalThumbnailLink = apiData.thumbnailLink || scraperData.fallbackThumbnail;
 
                             
-                            // 3. Send Video or Error
+                            // 3. Send Video or Error (V63 Logic)
                             if (videoUrl) {
                                 handlers.progressActive = false; 
                                 
-                                if (progressMessageId) {
-                                    // Delete the progress message before sending the final video
-                                    await handlers.deleteMessage(chatId, progressMessageId);
+                                if (apiData.filesize > MAX_FILE_SIZE_BYTES) {
+                                    // 3.1. Send Download Link (If too large)
+                                    if (progressMessageId) {
+                                        await handlers.deleteMessage(chatId, progressMessageId);
+                                    }
+                                    
+                                    await handlers.sendLinkMessage(
+                                        chatId,
+                                        videoUrl, 
+                                        finalCaption, 
+                                        messageId
+                                    );
+                                    
+                                } else {
+                                    // 3.2. Send Video Directly (If within limit)
+                                    if (progressMessageId) {
+                                        // Delete the progress message before sending the final video
+                                        await handlers.deleteMessage(chatId, progressMessageId);
+                                    }
+                                    
+                                    await handlers.sendVideo(
+                                        chatId, 
+                                        videoUrl, 
+                                        finalCaption, // Includes all metadata
+                                        messageId, 
+                                        finalThumbnailLink, 
+                                        userInlineKeyboard
+                                    ); 
                                 }
-                                
-                                await handlers.sendVideo(
-                                    chatId, 
-                                    videoUrl, 
-                                    finalCaption, // Includes all metadata
-                                    messageId, 
-                                    finalThumbnailLink, 
-                                    userInlineKeyboard
-                                ); 
                                 
                             } else {
                                 console.error(`[DEBUG] Video Link not found for: ${text}`);
