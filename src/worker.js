@@ -32,7 +32,8 @@ class WorkerHandlers {
     
     // --- Telegram API Helpers ---
 
-    async sendMessage(chatId, text, replyToMessageId) {
+    // 🚩 FIX: Added inlineKeyboard parameter and included reply_markup in the API call.
+    async sendMessage(chatId, text, replyToMessageId, inlineKeyboard = null) {
         try {
             const response = await fetch(`${telegramApi}/sendMessage`, {
                 method: 'POST',
@@ -42,6 +43,8 @@ class WorkerHandlers {
                     text: text, 
                     parse_mode: 'HTML', 
                     ...(replyToMessageId && { reply_to_message_id: replyToMessageId }),
+                    // Include inline keyboard if provided
+                    ...(inlineKeyboard && { reply_markup: { inline_keyboard: inlineKeyboard } }),
                 }),
             });
             const result = await response.json();
@@ -142,6 +145,7 @@ class WorkerHandlers {
                     message_id: messageId,
                     text: text,
                     parse_mode: 'HTML',
+                    // The edit method already expects reply_markup here
                     ...(inlineKeyboard !== null && { reply_markup: { inline_keyboard: inlineKeyboard } }),
                 }),
             });
@@ -416,27 +420,21 @@ export default {
                             if (videoData.available_formats && videoData.available_formats.length > 0) {
                                 const encodedUrl = encodeURIComponent(text); // Encode full link for callback data
                                 
+                                // Create buttons: [[B1], [B2], [B3], ...] - each button on a new row.
                                 const qualityButtons = videoData.available_formats.map(format => [{
                                     text: `📥 Download ${format.quality}`,
-                                    // CRITICAL FIX: Encode the full URL into the callback data
                                     callback_data: `dl_${format.quality}_${encodedUrl}` 
                                 }]);
                                 
+                                // Send the message with the inline keyboard
                                 await handlers.sendMessage(
                                     chatId,
-                                    `${htmlBold('🎥 Video Quality එකක් තෝරන්න:')}`,
-                                    messageId
+                                    `${htmlBold('🎥 Video Quality එකක් තෝරන්න:')}\n${videoTitle}`,
+                                    null, // No reply_to_message_id for this message
+                                    qualityButtons // 🚩 FIX: Passing the inline keyboard here
                                 );
                                 
-                                // Telegram only allows inline keyboards on the message they are replied to or the message itself
-                                await handlers.sendMessage(
-                                    chatId,
-                                    `Select download quality for: ${htmlBold(videoTitle)}`,
-                                    null, // Don't reply to user message to keep the thread cleaner
-                                    qualityButtons // Use reply_markup
-                                );
-                                
-                                console.log("[SUCCESS] Quality selection buttons prepared");
+                                console.log("[SUCCESS] Quality selection buttons prepared and sent.");
                             }
 
                         } else {
