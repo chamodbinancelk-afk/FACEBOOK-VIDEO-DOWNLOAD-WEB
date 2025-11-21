@@ -1,3 +1,5 @@
+// handlers.js
+
 import { API_URL } from './config';
 
 async function getApiMetadata(link) {
