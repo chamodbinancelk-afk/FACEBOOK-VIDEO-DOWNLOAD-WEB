@@ -1,5 +1,3 @@
-// handlers.js
-
 import { htmlBold } from './helpers';
 import { 
     telegramApi, 
