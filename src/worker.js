@@ -1,9 +1,8 @@
 /**
  * src/index.js
- * Complete Code V61 (Enhanced Caption & Hybrid Mode) - FIXED Duration and Date Formatting
- * - Video Link (Muxed/Working) is obtained via HTML Scraping (fdown.net/download.php).
- * - Metadata (Title, Thumbnail, Uploader, Duration, Views, Date) are obtained via JSON API.
- * - Caption format: Title + Metadata (Uploader, Duration, Views, Date).
+ * Complete Code Hybrid V62 (Metadata/Duration Fix + V34 Admin Panel/Broadcast/Progress)
+ * Developer: @chamoddeshan
+ * NOTE: This hybrid code combines the working metadata logic (V61) with the V34 Admin/Broadcast features.
  */
 
 // *****************************************************************
@@ -29,7 +28,7 @@ function htmlBold(text) {
 function formatDuration(seconds) {
     if (typeof seconds !== 'number' || seconds < 0) return 'N/A';
     
-    // ⭐️ FIX: Round the seconds to the nearest whole number to avoid long decimals
+    // Round the seconds to the nearest whole number to avoid long decimals
     const totalSeconds = Math.round(seconds); 
 
     const h = Math.floor(totalSeconds / 3600);
@@ -52,7 +51,7 @@ function formatCaption(data) {
     const formattedDuration = formatDuration(duration);
     const formattedViews = typeof views === 'number' ? views.toLocaleString('en-US') : views;
     
-    // ⭐️ FIX: Format Upload Date from YYYYMMDD to YYYY-MM-DD
+    // Format Upload Date from YYYYMMDD to YYYY-MM-DD
     let formattedDate = uploadDate;
     if (uploadDate && /^\d{8}$/.test(uploadDate)) {
         formattedDate = uploadDate.substring(0, 4) + '-' + uploadDate.substring(4, 6) + '-' + uploadDate.substring(6, 8);
@@ -66,10 +65,31 @@ function formatCaption(data) {
     caption += `👤 ${htmlBold(uploader)}\n`;
     caption += `⏱️ Duration: ${htmlBold(formattedDuration)}\n`;
     caption += `👁️ Views: ${htmlBold(formattedViews)}\n`;
-    caption += `📅 Uploaded: ${htmlBold(formattedDate)}`; // Use fixed date format
+    caption += `📅 Uploaded: ${htmlBold(formattedDate)}`; 
+    
+    // Add developer/copyright info at the end for the final output
+    caption += `\n\n◇───────────────◇\n`
+    caption += `🚀 Developer: @chamoddeshan\n`
+    caption += `🔥 C D H Corporation ©`;
+
 
     return caption;
 }
+
+// *** PROGRESS_STATES for progress bar (from V34) ***
+const PROGRESS_STATES = [
+    { text: "⏳ <b>Loading</b>...▒▒▒▒▒▒▒▒▒▒", percentage: "0%" },
+    { text: "📥 <b>Downloading</b>...█▒▒▒▒▒▒▒▒▒", percentage: "10%" },
+    { text: "📥 <b>Downloading</b>...██▒▒▒▒▒▒▒▒", percentage: "20%" },
+    { text: "📥 <b>Downloading</b>...███▒▒▒▒▒▒▒", percentage: "30%" },
+    { text: "📤 <b>Uploading</b>...████▒▒▒▒▒▒", percentage: "40%" },
+    { text: "📤 <b>Uploading</b>...█████▒▒▒▒▒", percentage: "50%" },
+    { text: "📤 <b>Uploading</b>...██████▒▒▒▒", percentage: "60%" },
+    { text: "📤 <b>Uploading</b>...███████▒▒▒", percentage: "70%" },
+    { text: "✨ <b>Finalizing</b>...████████▒▒", percentage: "80%" },
+    { text: "✨ <b>Finalizing</b>...█████████▒", percentage: "90%" },
+    { text: "✅ <b>Done!</b> ██████████", percentage: "100%" } 
+];
 
 
 // *****************************************************************
@@ -80,10 +100,37 @@ class WorkerHandlers {
     
     constructor(env) {
         this.env = env;
+        this.progressActive = true; 
     }
     
-    // --- Telegram API Helpers ---
-    async sendMessage(chatId, text, replyToMessageId) {
+    // --- KV DB Management (from V34) ---
+
+    async saveUserId(userId) {
+        if (!this.env.USER_DATABASE) return; 
+        const key = `user:${userId}`;
+        const isNew = await this.env.USER_DATABASE.get(key) === null; 
+        if (isNew) {
+            try {
+                await this.env.USER_DATABASE.put(key, "1"); 
+            } catch (e) {
+                console.error(`KV Error: Failed to save user ID ${userId}`, e);
+            }
+        }
+    }
+    
+    async getAllUsersCount() {
+        if (!this.env.USER_DATABASE) return 0;
+        try {
+            const list = await this.env.USER_DATABASE.list({ prefix: 'user:' });
+            return list.keys.length;
+        } catch (e) {
+            console.error("KV Error: Failed to list user keys:", e);
+            return 0;
+        }
+    }
+    
+    // --- Telegram API Helpers (from V34, slightly modified) ---
+    async sendMessage(chatId, text, replyToMessageId, inlineKeyboard = null) {
         try {
             const response = await fetch(`${telegramApi}/sendMessage`, {
                 method: 'POST',
@@ -93,6 +140,7 @@ class WorkerHandlers {
                     text: text, 
                     parse_mode: 'HTML',
                     ...(replyToMessageId && { reply_to_message_id: replyToMessageId }),
+                    ...(inlineKeyboard && { reply_markup: { inline_keyboard: inlineKeyboard } }),
                 }),
             });
             const result = await response.json();
@@ -107,57 +155,90 @@ class WorkerHandlers {
         }
     }
 
-    // --- sendPhoto (Send thumbnail with caption) ---
-    async sendPhoto(chatId, photoUrl, replyToMessageId, caption = null) { 
+    async editMessage(chatId, messageId, text, inlineKeyboard = null) {
         try {
-            console.log(`[INFO] Attempting to send photo from URL: ${photoUrl.substring(0, 50)}...`);
-            // The caption parameter already contains the full formatted caption including the title
-            const response = await fetch(`${telegramApi}/sendPhoto`, {
+            const body = {
+                chat_id: chatId,
+                message_id: messageId,
+                text: text,
+                parse_mode: 'HTML', 
+                ...(inlineKeyboard && { reply_markup: { inline_keyboard: inlineKeyboard } }),
+            };
+            const response = await fetch(`${telegramApi}/editMessageText`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            
+            const result = await response.json(); 
+
+             if (!response.ok) {
+                // Ignore 'message to edit not found' error
+                if (result.error_code === 400 && result.description && result.description.includes("message to edit not found")) {
+                     return;
+                } else {
+                     console.error(`editMessage API Failed (Chat ID: ${chatId}):`, result);
+                }
+            }
+        } catch (e) { 
+             console.error(`editMessage Fetch Error (Chat ID: ${chatId}):`, e);
+        }
+    }
+    
+    async deleteMessage(chatId, messageId) {
+        try {
+            const response = await fetch(`${telegramApi}/deleteMessage`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     chat_id: chatId,
-                    photo: photoUrl,
-                    reply_to_message_id: replyToMessageId,
-                    caption: caption || htmlBold("✅ Thumbnail Downloaded!"), // Use the passed caption
-                    parse_mode: 'HTML',
+                    message_id: messageId,
                 }),
             });
-            const result = await response.json();
-            if (response.ok) {
-                console.log("[SUCCESS] sendPhoto successful.");
-                return result.result.message_id; 
+             if (!response.ok) {
+                console.warn(`deleteMessage API Failed (Chat ID: ${chatId}, Msg ID: ${messageId}):`, await response.text());
             }
-            console.error(`[ERROR] sendPhoto API Failed (Chat ID: ${chatId}):`, result);
-            return null;
+        } catch (e) { 
+             console.error(`deleteMessage Fetch Error (Chat ID: ${chatId}):`, e);
+        }
+    }
+    
+    async answerCallbackQuery(callbackQueryId, text) {
+        try {
+            await fetch(`${telegramApi}/answerCallbackQuery`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    callback_query_id: callbackQueryId,
+                    text: text,
+                    show_alert: false, 
+                }),
+            });
         } catch (e) {
-            console.error(`[ERROR] sendPhoto Fetch Error (Chat ID: ${chatId}):`, e);
-            return null;
+            console.error("answerCallbackQuery failed:", e);
         }
     }
 
-    // --- sendVideo (Download & Upload as Blob - Mimics Site Referer) ---
-    async sendVideo(chatId, videoUrl, caption = null, replyToMessageId = null, thumbnailLink = null) {
+    // --- sendVideo (With 403 Fix Headers) ---
+    async sendVideo(chatId, videoUrl, caption = null, replyToMessageId, thumbnailLink = null, inlineKeyboard = null) {
         
         console.log(`[DEBUG] Attempting to send video. URL: ${videoUrl.substring(0, 50)}...`);
         
         try {
-            // Download video using Referer header to mimic the fdown.net site download
+            // FIX: 403 Forbidden Error මඟහැරීමට User-Agent සහ Referer Headers එකතු කිරීම.
             const videoResponse = await fetch(videoUrl, {
                 method: 'GET',
                 headers: {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                    'Referer': 'https://fdown.net/', 
-                    'Accept': 'video/mp4,video/webm,video/*;q=0.9,application/ogg;q=0.7,audio/*;q=0.6,*/*;q=0.5',
-                    'Accept-Language': 'en-US,en;q=0.5'
+                    'Referer': 'https://fdown.net/',
                 },
             });
             
             if (videoResponse.status !== 200) {
                 console.error(`[DEBUG] Video Fetch Failed! Status: ${videoResponse.status} for URL: ${videoUrl}`);
                 if (videoResponse.body) { await videoResponse.body.cancel(); }
-                await this.sendMessage(telegramApi, chatId, htmlBold('⚠️ වීඩියෝව කෙලින්ම Upload කිරීමට අසාර්ථකයි. CDN වෙත පිවිසීමට නොහැක.'), replyToMessageId);
-                return null; 
+                await this.sendMessage(chatId, htmlBold(`⚠️ වීඩියෝව කෙලින්ම Upload කිරීමට අසාර්ථකයි. CDN වෙත පිවිසීමට නොහැක. (HTTP ${videoResponse.status})`), replyToMessageId);
+                return;
             }
             
             const videoBlob = await videoResponse.blob();
@@ -190,6 +271,12 @@ class WorkerHandlers {
                     console.warn("Thumbnail fetch failed:", e);
                 }
             }
+            
+            if (inlineKeyboard) {
+                formData.append('reply_markup', JSON.stringify({
+                    inline_keyboard: inlineKeyboard
+                }));
+            }
 
             const telegramResponse = await fetch(`${telegramApi}/sendVideo`, {
                 method: 'POST',
@@ -200,69 +287,114 @@ class WorkerHandlers {
             
             if (!telegramResponse.ok) {
                 console.error(`[DEBUG] sendVideo API Failed! Result:`, telegramResult);
-                await this.sendMessage(telegramApi, chatId, htmlBold(`❌ වීඩියෝව යැවීම අසාර්ථකයි! (Error: ${telegramResult.description || 'නොදන්නා දෝෂයක්.'})`), replyToMessageId);
-                return null;
+                await this.sendMessage(chatId, htmlBold(`❌ වීඩියෝව යැවීම අසාර්ථකයි! (Error: ${telegramResult.description || 'නොදන්නා දෝෂයක්.'})`), replyToMessageId);
             } else {
-                console.log(`[DEBUG] sendVideo successful.`);
-                return telegramResult.result.message_id;
+                 console.log(`[DEBUG] sendVideo successful.`);
             }
             
         } catch (e) {
             console.error(`[DEBUG] sendVideo General Error (Chat ID: ${chatId}):`, e);
-            await this.sendMessage(telegramApi, chatId, htmlBold(`❌ වීඩියෝව යැවීම අසාර්ථකයි! (Network හෝ Timeout දෝෂයක්).`), replyToMessageId);
-            return null;
+            await this.sendMessage(chatId, htmlBold(`❌ වීඩියෝව යැවීම අසාර්ථකයි! (Network හෝ Timeout දෝෂයක්).`), replyToMessageId);
         }
     }
 
-    // --- editMessageText (Edit the text of a message) ---
-    async editMessageText(chatId, messageId, text, inlineKeyboard = null) {
-        try {
-            const response = await fetch(`${telegramApi}/editMessageText`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    chat_id: chatId,
-                    message_id: messageId,
-                    text: text,
-                    parse_mode: 'HTML',
-                    ...(inlineKeyboard !== null && { reply_markup: { inline_keyboard: inlineKeyboard } }),
-                }),
-            });
-            const result = await response.json();
-            if (response.ok) {
-                console.log("[SUCCESS] editMessageText successful.");
-                return true;
-            }
-            console.warn(`[WARN] editMessageText failed for ${messageId}:`, result);
-            return false;
-        } catch (e) {
-            console.error(`[ERROR] editMessageText error:`, e);
-            return false;
+
+    // --- Progress Bar Simulation (from V34) ---
+
+    async simulateProgress(chatId, messageId, originalReplyId) {
+        this.progressActive = true;
+        const originalText = htmlBold('⌛️ වීඩියෝව හඳුනා ගැනේ... කරුණාකර මොහොතක් රැඳී සිටින්න.'); 
+        
+        // Skip the first state (which is the initial message text)
+        const statesToUpdate = PROGRESS_STATES.slice(1, 10); 
+
+        for (let i = 0; i < statesToUpdate.length; i++) {
+            if (!this.progressActive) break; 
+            
+            // Wait 800ms between updates
+            await new Promise(resolve => setTimeout(resolve, 800)); 
+            
+            if (!this.progressActive) break; 
+
+            const state = statesToUpdate[i];
+            
+            // PROGRESS_STATES already includes HTML <b> tags
+            const newKeyboard = [
+                [{ text: state.text.replace(/<[^>]*>/g, ''), callback_data: 'ignore_progress' }] // Remove HTML for button text
+            ];
+            const newText = originalText + "\n" + htmlBold(`\nStatus:`) + ` ${state.text}`; // Use raw state.text which has bold
+            
+            this.editMessage(chatId, messageId, newText, newKeyboard);
         }
     }
+    
+    // --- Broadcast Feature (from V34) ---
+    async broadcastMessage(fromChatId, originalMessageId) {
+        if (!this.env.USER_DATABASE) return { successfulSends: 0, failedSends: 0 };
+        
+        const BATCH_SIZE = 50; 
+        let successfulSends = 0;
+        let failedSends = 0;
 
-    // --- deleteMessage (Delete a previous message) ---
-    async deleteMessage(chatId, messageId) {
-        if (!messageId) return false;
         try {
-            const response = await fetch(`${telegramApi}/deleteMessage`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    chat_id: chatId,
-                    message_id: messageId,
-                }),
-            });
-            if (response.ok) {
-                console.log(`[SUCCESS] Deleted message ${messageId} in chat ${chatId}.`);
-                return true;
+            const list = await this.env.USER_DATABASE.list({ prefix: 'user:' });
+            const userKeys = list.keys.map(key => key.name.split(':')[1]);
+            
+            const totalUsers = userKeys.length;
+            console.log(`[BROADCAST] Total users found: ${totalUsers}`);
+            
+            const copyMessageUrl = `${telegramApi}/copyMessage`; 
+            
+            for (let i = 0; i < totalUsers; i += BATCH_SIZE) {
+                const batch = userKeys.slice(i, i + BATCH_SIZE);
+                console.log(`[BROADCAST] Processing batch ${Math.ceil((i + 1) / BATCH_SIZE)}/${Math.ceil(totalUsers / BATCH_SIZE)} (Size: ${batch.length})`);
+                
+                const sendPromises = batch.map(async (userId) => {
+                    if (userId.toString() === OWNER_ID.toString()) return; 
+
+                    try {
+                        const copyBody = {
+                            chat_id: userId,
+                            from_chat_id: fromChatId,
+                            message_id: originalMessageId,
+                        };
+                        
+                        const response = await fetch(copyMessageUrl, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(copyBody),
+                        });
+
+                        if (response.ok) {
+                            successfulSends++;
+                        } else {
+                            failedSends++;
+                            const result = await response.json();
+                            // Block වූ Users ලා ඉවත් කිරීම (403: Forbidden)
+                            if (result.error_code === 403) {
+                                console.log(`User ${userId} blocked the bot. Removing from KV.`);
+                                this.env.USER_DATABASE.delete(`user:${userId}`);
+                            }
+                        }
+                    } catch (e) {
+                        console.error(`Broadcast failed for user ${userId}:`, e);
+                        failedSends++;
+                    }
+                });
+
+                // Batch එකේ සියලුම promises අවසන් වනතුරු රැඳී සිටීම
+                await Promise.allSettled(sendPromises);
+                
+                // Telegram Rate Limits වළක්වා ගැනීමට Batch අතර තත්පර 1ක රැඳී සිටීම
+                await new Promise(resolve => setTimeout(resolve, 1000));
             }
-            console.warn(`[WARN] deleteMessage failed for ${messageId}:`, await response.json());
-            return false;
+
+
         } catch (e) {
-            console.error(`[ERROR] deleteMessage error for ${messageId}:`, e);
-            return false;
+            console.error("Error listing users for broadcast:", e);
         }
+
+        return { successfulSends, failedSends };
     }
 }
 
@@ -272,7 +404,7 @@ class WorkerHandlers {
 // *****************************************************************
 
 /**
- * ⭐️ Function 1: Get Thumbnail/Title/Metadata from JSON API
+ * Function 1: Get Thumbnail/Title/Metadata from JSON API (From V61)
  */
 async function getApiMetadata(link) {
     try {
@@ -307,7 +439,6 @@ async function getApiMetadata(link) {
             if (info.title) {
                 videoTitle = info.title;
             }
-            // Extracting fields
             uploader = info.uploader || info.page_name || 'Unknown Uploader';
             duration = info.duration || 0;
             views = info.view_count || info.views || 0;
@@ -338,13 +469,13 @@ async function getApiMetadata(link) {
 
 
 /**
- * ⭐️ Function 2: Get Working Video Link from HTML Scraper
+ * Function 2: Get Working Video Link from HTML Scraper (From V61, simplified/integrated)
  */
-async function scrapeVideoLink(link) {
+async function scrapeVideoLinkAndThumbnail(link) {
     const fdownUrl = "https://fdown.net/download.php";
     
     const formData = new URLSearchParams();
-    formData.append('URLz', link); // Pass the Facebook URL
+    formData.append('URLz', link); 
 
     const fdownResponse = await fetch(fdownUrl, {
         method: 'POST',
@@ -363,9 +494,9 @@ async function scrapeVideoLink(link) {
 
     const resultHtml = await fdownResponse.text();
     let videoUrl = null;
+    let fallbackThumbnail = null;
 
     // Download Links Scraping (Prioritize HD)
-    
     const hdLinkRegex = /<a[^>]+href=["']?([^"'\s]+)["']?[^>]*>.*Download Video in HD Quality.*<\/a>/i;
     let match = resultHtml.match(hdLinkRegex);
 
@@ -379,10 +510,25 @@ async function scrapeVideoLink(link) {
             videoUrl = match[1];
         }
     }
+    
+    // Get Fallback Thumbnail Link from scraper if API didn't provide one
+    const thumbnailRegex = /<img[^>]+class=["']?fb_img["']?[^>]*src=["']?([^"'\s]+)["']?/i;
+    let thumbnailMatch = resultHtml.match(thumbnailRegex);
+    if (thumbnailMatch && thumbnailMatch[1]) {
+         fallbackThumbnail = thumbnailMatch[1];
+    }
 
-    return videoUrl ? videoUrl.replace(/&amp;/g, '&') : null;
+
+    return {
+        videoUrl: videoUrl ? videoUrl.replace(/&amp;/g, '&') : null,
+        fallbackThumbnail: fallbackThumbnail ? fallbackThumbnail.replace(/&amp;/g, '&') : null
+    };
 }
 
+
+// *****************************************************************
+// ********** [ 4. Main Fetch Handler ] ******************************
+// *****************************************************************
 
 export default {
     
@@ -393,125 +539,252 @@ export default {
         
         const handlers = new WorkerHandlers(env);
         
+        // --- Inline Keyboards ---
+        const userInlineKeyboard = [
+            [{ text: 'C D H Corporation © ✅', callback_data: 'ignore_c_d_h' }] 
+        ];
+        
+        const initialProgressKeyboard = [
+             [{ text: PROGRESS_STATES[0].text.replace(/<[^>]*>/g, ''), callback_data: 'ignore_progress' }]
+        ];
+        // ------------------------
+
         try {
             const update = await request.json();
             const message = update.message;
+            const callbackQuery = update.callback_query;
             
-            if (!message) {
+            if (!message && !callbackQuery) {
+                 return new Response('OK', { status: 200 });
+            }
+            
+            // Ensure the main execution path is not blocked by KV writes
+            ctx.waitUntil(new Promise(resolve => setTimeout(resolve, 0)));
+
+
+            // --- 1. Message Handling ---
+            if (message) { 
+                const chatId = message.chat.id;
+                const messageId = message.message_id;
+                const text = message.text ? message.text.trim() : null; 
+                const isOwner = OWNER_ID && chatId.toString() === OWNER_ID.toString();
+                
+                const userName = message.from.first_name || "User"; 
+
+                // Save user ID to KV in the background
+                ctx.waitUntil(handlers.saveUserId(chatId));
+
+                // A. Broadcast Message Logic (Prompt Reply)
+                if (isOwner && message.reply_to_message) {
+                    const repliedMessage = message.reply_to_message;
+                    
+                    // Prompt Message එක හඳුනාගැනීම සඳහා සරල පරීක්ෂාවක්
+                    if (repliedMessage.text && repliedMessage.text.includes("කරුණාකර දැන් ඔබ යැවීමට අවශ්‍ය පණිවිඩය එවන්න:")) {
+                        
+                        const messageToBroadcastId = messageId; 
+                        const originalChatId = chatId;
+                        const promptMessageId = repliedMessage.message_id; 
+
+                        // Prompt Message එක Edit කිරීම
+                        await handlers.editMessage(chatId, promptMessageId, htmlBold("📣 Broadcast කිරීම ආරම්භ විය. කරුණාකර රැඳී සිටින්න."));
+                        
+                        // Background එකේ Broadcast කිරීම ආරම්භ කිරීම (using ctx.waitUntil)
+                        ctx.waitUntil((async () => {
+                            try {
+                                const results = await handlers.broadcastMessage(originalChatId, messageToBroadcastId);
+                                
+                                // Admin හට ප්‍රතිඵල යැවීම (Broadcast අවසන් වූ පසු)
+                                const resultMessage = htmlBold(`Message Send Successfully ✅`) + `\n\n` + htmlBold(`🚀 Send: ${results.successfulSends}`) + `\n` + htmlBold(`❗️ Faild: ${results.failedSends}`);
+                                
+                                // Broadcast පණිවිඩයටම Reply කර ප්‍රතිඵල යැවීම
+                                await handlers.sendMessage(chatId, resultMessage, messageToBroadcastId); 
+
+                            } catch (e) {
+                                console.error("Broadcast Process Failed in WaitUntil:", e);
+                                // Admin හට දෝෂ පණිවිඩයක් යැවීම
+                                await handlers.sendMessage(chatId, htmlBold("❌ Broadcast කිරීමේ ක්‍රියාවලිය අසාර්ථක විය.") + `\n\nError: ${e.message}`, messageToBroadcastId);
+                            }
+                        })()); 
+
+                        return new Response('OK', { status: 200 });
+                    }
+                }
+                
+                // A2. Owner Quick Broadcast Option (/brod command)
+                if (isOwner && text && text.toLowerCase().startsWith('/brod') && message.reply_to_message) {
+                    const messageToBroadcastId = message.reply_to_message.message_id; 
+                    const originalChatId = chatId;
+                    
+                    await handlers.sendMessage(chatId, htmlBold("📣 Quick Broadcast ආරම්භ විය..."), messageId);
+
+                    ctx.waitUntil((async () => {
+                        try {
+                            const results = await handlers.broadcastMessage(originalChatId, messageToBroadcastId);
+                            
+                            const resultMessage = htmlBold(`Quick Message Send Successfully ✅`) + `\n\n` + htmlBold(`🚀 Send: ${results.successfulSends}`) + `\n` + htmlBold(`❗️ Faild: ${results.failedSends}`);
+                            
+                            await handlers.sendMessage(chatId, resultMessage, messageToBroadcastId); 
+
+                        } catch (e) {
+                            console.error("Quick Broadcast Process Failed in WaitUntil:", e);
+                            await handlers.sendMessage(chatId, htmlBold("❌ Quick Broadcast කිරීමේ ක්‍රියාවලිය අසාර්ථක විය.") + `\n\nError: ${e.message}`, messageId);
+                        }
+                    })());
+
+                    return new Response('OK', { status: 200 });
+                }
+
+                
+                // B. /start command Handling (User/Admin Panel)
+                if (text && text.toLowerCase().startsWith('/start')) {
+                    
+                    if (isOwner) {
+                        // Owner Message and Admin Keyboard (HTML)
+                        const ownerText = htmlBold("👑 Welcome Back, Admin! 👑") + "\n\nමෙය ඔබගේ Admin Control Panel එකයි.";
+                        const adminKeyboard = [
+                            [{ text: '📊 Users Count', callback_data: 'admin_users_count' }],
+                            [{ text: '📣 Broadcast', callback_data: 'admin_broadcast' }],
+                            [{ text: 'C D H Corporation © ✅', callback_data: 'ignore_c_d_h' }] 
+                        ];
+                        await handlers.sendMessage(chatId, ownerText, messageId, adminKeyboard);
+                    } else {
+                        // Normal User Message (English HTML)
+                        const userText = `👋 <b>Hello Dear ${userName}!</b> 💁‍♂️ You can easily <b>Download Facebook Videos</b> using this BOT.
+
+🎯 This BOT is <b>Active 24/7</b>.🔔 
+
+◇───────────────◇
+
+🚀 <b>Developer</b> : @chamoddeshan
+🔥 <b>C D H Corporation ©</b>
+
+◇───────────────◇`;
+                        
+                        await handlers.sendMessage(chatId, userText, messageId, userInlineKeyboard);
+                    }
+                    return new Response('OK', { status: 200 });
+                }
+
+                // C. Facebook Link Handling (Hybrid Logic - V61)
+                if (text) { 
+                    const isLink = /^https?:\/\/(www\.)?(facebook\.com|fb\.watch|fb\.me)/i.test(text);
+                    
+                    if (isLink) {
+                        
+                        // 1. Initial Message Send & Progress Start
+                        const initialText = htmlBold('⌛️ වීඩියෝව හඳුනා ගැනේ... කරුණාකර මොහොතක් රැඳී සිටින්න.'); 
+                        const progressMessageId = await handlers.sendMessage(
+                            chatId, 
+                            initialText, 
+                            messageId, 
+                            initialProgressKeyboard
+                        );
+                        
+                        if (progressMessageId) {
+                            ctx.waitUntil(handlers.simulateProgress(chatId, progressMessageId, messageId));
+                        }
+                        
+                        // 2. Start Scraping and Fetching
+                        try {
+                            // Fetch Metadata (Title/Uploader/Date/Duration) from API
+                            const apiData = await getApiMetadata(text);
+                            const finalCaption = formatCaption(apiData);
+                            
+                            // Fetch Download Link and Fallback Thumbnail from Scraper
+                            const scraperData = await scrapeVideoLinkAndThumbnail(text);
+                            const videoUrl = scraperData.videoUrl;
+                            
+                            // Use API thumbnail if available, otherwise use scraper fallback
+                            const finalThumbnailLink = apiData.thumbnailLink || scraperData.fallbackThumbnail;
+
+                            
+                            // 3. Send Video or Error
+                            if (videoUrl) {
+                                handlers.progressActive = false; 
+                                
+                                if (progressMessageId) {
+                                    // Delete the progress message before sending the final video
+                                    await handlers.deleteMessage(chatId, progressMessageId);
+                                }
+                                
+                                await handlers.sendVideo(
+                                    chatId, 
+                                    videoUrl, 
+                                    finalCaption, // Includes all metadata
+                                    messageId, 
+                                    finalThumbnailLink, 
+                                    userInlineKeyboard
+                                ); 
+                                
+                            } else {
+                                console.error(`[DEBUG] Video Link not found for: ${text}`);
+                                handlers.progressActive = false;
+                                const errorText = htmlBold('⚠️ සමාවෙන්න, වීඩියෝ Download Link එක සොයා ගැනීමට නොහැකි විය. වීඩියෝව Private (පුද්ගලික) විය හැක.');
+                                if (progressMessageId) {
+                                    await handlers.editMessage(chatId, progressMessageId, errorText); 
+                                } else {
+                                    await handlers.sendMessage(chatId, errorText, messageId);
+                                }
+                            }
+                            
+                        } catch (fdownError) {
+                            console.error(`[DEBUG] FDown Scraping/API Error (Chat ID: ${chatId}):`, fdownError);
+                            handlers.progressActive = false;
+                            const errorText = htmlBold('❌ වීඩියෝ තොරතුරු ලබා ගැනීමේදී දෝෂයක් ඇති විය.');
+                            if (progressMessageId) {
+                                await handlers.editMessage(chatId, progressMessageId, errorText);
+                            } else {
+                                await handlers.sendMessage(chatId, errorText, messageId);
+                            }
+                        }
+                        
+                    } else {
+                        await handlers.sendMessage(chatId, htmlBold('❌ කරුණාකර වලංගු Facebook වීඩියෝ Link එකක් එවන්න.'), messageId);
+                    }
+                } 
+            }
+            
+            // --- 2. Callback Query Handling ---
+            if (callbackQuery) {
+                 const chatId = callbackQuery.message.chat.id;
+                 const data = callbackQuery.data;
+                 const messageId = callbackQuery.message.message_id;
+
+                 if (data === 'ignore_progress') {
+                     await handlers.answerCallbackQuery(callbackQuery.id, "🎬 වීඩියෝව සකස් වෙමින් පවතී...");
+                     return new Response('OK', { status: 200 });
+                 }
+                 
+                 // Owner Check for admin callbacks
+                 if (OWNER_ID && chatId.toString() !== OWNER_ID.toString()) {
+                      await handlers.answerCallbackQuery(callbackQuery.id, "❌ ඔබට මෙම විධානය භාවිතා කළ නොහැක.");
+                      return new Response('OK', { status: 200 });
+                 }
+
+                 switch (data) {
+                     case 'admin_users_count':
+                          const usersCount = await handlers.getAllUsersCount();
+                          const countMessage = htmlBold(`📊 දැනට ඔබගේ Bot භාවිතා කරන Users ගණන: ${usersCount}`);
+                          await handlers.editMessage(chatId, messageId, countMessage);
+                          await handlers.answerCallbackQuery(callbackQuery.id, `Users ${usersCount} ක් සිටී.`);
+                          break;
+                     
+                     case 'admin_broadcast':
+                          // Sending a new message/prompt for the broadcast
+                          const broadcastPrompt = htmlBold(`📣 Broadcast පණිවිඩය\n\nකරුණාකර දැන් ඔබ යැවීමට අවශ්‍ය <b>Text, Photo, හෝ Video</b> එක <b>Reply</b> කරන්න.`);
+                          await handlers.sendMessage(chatId, broadcastPrompt, messageId); 
+                          await handlers.answerCallbackQuery(callbackQuery.id, "Broadcast කිරීම සඳහා පණිවිඩය සූදානම්.");
+                          break;
+                     
+                     case 'ignore_c_d_h':
+                          await handlers.answerCallbackQuery(callbackQuery.id, "මෙය තොරතුරු බොත්තමකි.");
+                          break;
+                 }
+
                  return new Response('OK', { status: 200 });
             }
 
-            const chatId = message.chat.id;
-            const messageId = message.message_id;
-            const text = message.text ? message.text.trim() : null; 
-            
-            const userName = message.from.first_name || "User"; 
 
-            // --- 1. /start command Handling ---
-            if (text && text.toLowerCase().startsWith('/start')) {
-                const userText = `${htmlBold('👋 සුභ දවසක්!')} 💁‍♂️ මෙය Facebook වීඩියෝ බාගත කිරීමේ Bot එකයි.
-                
-කරුණාකර Facebook Video link එකක් එවන්න.`;
-                await handlers.sendMessage(chatId, userText, messageId);
-                return new Response('OK', { status: 200 });
-            }
-
-            // --- 2. Facebook Link Handling ---
-            if (text) { 
-                const isLink = /^https?:\/\/(www\.)?(facebook\.com|fb\.watch|fb\.me)/i.test(text);
-                
-                if (isLink) {
-                    
-                    // Initial Acknowledgement Message
-                    const initialMessage = await handlers.sendMessage(
-                        chatId, 
-                        htmlBold('⏳ Video තොරතුරු සොයමින්...'), 
-                        messageId
-                    );
-                    
-                    try {
-                        // ⭐️ STEP 1: Get ALL Metadata from JSON API
-                        const apiData = await getApiMetadata(text);
-                        // apiData now contains correctly formatted Duration/Date inside (when passed to formatCaption)
-
-                        // Generate the final formatted caption
-                        const finalCaption = formatCaption(apiData);
-                        const { thumbnailLink } = apiData;
-
-
-                        // ⭐️ 1. Thumbnail Sending Logic (Used to display progress/title)
-                        let photoMessageId = null;
-                        
-                        if (thumbnailLink) {
-                            
-                            // Send thumbnail with the full formatted caption
-                            photoMessageId = await handlers.sendPhoto(
-                                chatId, 
-                                thumbnailLink, 
-                                messageId,
-                                finalCaption // Use the fixed caption
-                            );
-                            
-                            if (photoMessageId && initialMessage) {
-                                handlers.deleteMessage(chatId, initialMessage); 
-                            } else {
-                                // If photo failed, edit initial message instead
-                                await handlers.editMessageText(chatId, initialMessage, htmlBold('⚠️ Thumbnail එක යැවීම අසාර්ථක විය. Video Processing කරමින්...'));
-                                photoMessageId = initialMessage; 
-                            }
-                        } else if (initialMessage) {
-                             // If no thumbnail, edit initial message
-                             await handlers.editMessageText(chatId, initialMessage, htmlBold('⚠️ සමාවෙන්න, මේ Video එකේ Thumbnail එක සොයා ගැනීමට නොහැකි විය. Video Processing කරමින්...'));
-                             photoMessageId = initialMessage;
-                        }
-
-                        // ⭐️ STEP 2: Get WORKING Video Link from HTML Scraper
-                        const videoUrl = await scrapeVideoLink(text);
-
-                        // ⭐️ 2. Upload Logic
-                        
-                        if (videoUrl) {
-                            
-                            const uploadText = htmlBold(`🔄 වීඩියෝව Upload කරමින්...`);
-                            let statusMessageId = photoMessageId || initialMessage;
-                            
-                            // Update the message text to show uploading status
-                            await handlers.editMessageText(chatId, statusMessageId, uploadText);
-
-                            // The sendVideo function uses the strong Referer headers.
-                            const sentVideoId = await handlers.sendVideo(chatId, videoUrl, finalCaption, messageId, thumbnailLink);
-
-                            if (sentVideoId) {
-                                // Success: Delete the status message
-                                handlers.deleteMessage(chatId, statusMessageId);
-                            } 
-
-                        } else {
-                             // No format found error
-                            const errorText = htmlBold('❌ වීඩියෝ බාගත කිරීමේ Link සොයා ගැනීමට නොහැකි විය. වීඩියෝව Private (පුද්ගලික) විය හැක.');
-                            
-                            if (photoMessageId && photoMessageId !== initialMessage) {
-                                await handlers.sendMessage(chatId, errorText, messageId);
-                            } else if (initialMessage) {
-                                await handlers.editMessageText(chatId, initialMessage, errorText);
-                            }
-                        }
-                        
-                    } catch (overallError) {
-                        console.error(`[ERROR] Overall Processing Error (Chat ID: ${chatId}):`, overallError);
-                        const errorText = htmlBold('❌ Video තොරතුරු ලබා ගැනීමේ දෝෂයක් ඇති විය. කරුණාකර නැවත උත්සහා කරන්න.');
-                        if (initialMessage) {
-                            await handlers.editMessageText(chatId, initialMessage, errorText); 
-                        } else {
-                            await handlers.sendMessage(chatId, errorText, messageId);
-                        }
-                    }
-                    
-                } else {
-                    await handlers.sendMessage(chatId, htmlBold('❌ කරුණාකර වලංගු Facebook වීඩියෝ Link එකක් එවන්න.'), messageId);
-                }
-            } 
-            
             return new Response('OK', { status: 200 });
 
         } catch (e) {
