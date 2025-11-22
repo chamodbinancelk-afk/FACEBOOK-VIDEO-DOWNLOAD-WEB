@@ -1,8 +1,5 @@
 import { htmlBold } from './helpers';
 import { 
-    telegramApi, 
-    OWNER_ID, 
-    MAX_FILE_SIZE_BYTES, 
     PROGRESS_STATES 
 } from './config';
 
@@ -11,6 +8,7 @@ class WorkerHandlers {
     constructor(env) {
         this.env = env;
         this.progressActive = true; 
+        this.telegramApi = `https://api.telegram.org/bot${this.env.BOT_TOKEN}`; 
     }
     
     async saveUserId(userId) {
@@ -34,10 +32,9 @@ class WorkerHandlers {
         }
     }
     
-    // නව විශේෂාංගය: Chat Action යැවීම (typing, upload_video)
     async sendAction(chatId, action) {
         try {
-            await fetch(`${telegramApi}/sendChatAction`, {
+            await fetch(`${this.telegramApi}/sendChatAction`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -50,7 +47,7 @@ class WorkerHandlers {
 
     async sendMessage(chatId, text, replyToMessageId, inlineKeyboard = null) {
         try {
-            const response = await fetch(`${telegramApi}/sendMessage`, {
+            const response = await fetch(`${this.telegramApi}/sendMessage`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -73,7 +70,7 @@ class WorkerHandlers {
     
     async deleteMessage(chatId, messageId) {
         try {
-            const response = await fetch(`${telegramApi}/deleteMessage`, {
+            const response = await fetch(`${this.telegramApi}/deleteMessage`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -94,7 +91,7 @@ class WorkerHandlers {
                 parse_mode: 'HTML', 
                 ...(inlineKeyboard && { reply_markup: { inline_keyboard: inlineKeyboard } }),
             };
-            const response = await fetch(`${telegramApi}/editMessageText`, {
+            const response = await fetch(`${this.telegramApi}/editMessageText`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body),
@@ -112,7 +109,8 @@ class WorkerHandlers {
     
     async answerCallbackQuery(callbackQueryId, text) {
         try {
-            await fetch(`${telegramApi}/answerCallbackQuery`, {
+            // this.telegramApi භාවිතා කරයි
+            await fetch(`${this.telegramApi}/answerCallbackQuery`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -125,6 +123,8 @@ class WorkerHandlers {
     }
 
     async sendLinkMessage(chatId, videoUrl, caption, replyToMessageId) {
+        const MAX_FILE_SIZE_MB = (parseInt(this.env.MAX_FILE_SIZE_BYTES) || 52428800) / (1024 * 1024);
+        
         const inlineKeyboard = [
             [{ text: '⬇️ Download Video', url: videoUrl }], 
             [{ text: 'C D H Corporation © ✅', callback_data: 'ignore_c_d_h' }] 
@@ -134,7 +134,7 @@ class WorkerHandlers {
         const videoTitle = titleMatch ? titleMatch[1].replace(/<\/?b>/g, '').trim() : 'Video File';
         
         const largeFileMessage = htmlBold("⚠️ Large file detected.") + `\n\n`
-                               + `The video file size (${MAX_FILE_SIZE_BYTES / (1024 * 1024)}MB limit) is too large for direct Telegram upload. Please use the button below to download the file directly.\n\n`
+                               + `The video file size (${MAX_FILE_SIZE_MB}MB limit) is too large for direct Telegram upload. Please use the button below to download the file directly.\n\n`
                                + htmlBold("Title:") + ` ${videoTitle}`; 
 
         await this.sendMessage(
@@ -196,7 +196,8 @@ class WorkerHandlers {
                 }));
             }
 
-            const telegramResponse = await fetch(`${telegramApi}/sendVideo`, {
+            // this.telegramApi භාවිතා කරයි
+            const telegramResponse = await fetch(`${this.telegramApi}/sendVideo`, {
                 method: 'POST',
                 body: formData, 
             });
@@ -250,13 +251,15 @@ class WorkerHandlers {
             
             const totalUsers = userKeys.length;
             
-            const copyMessageUrl = `${telegramApi}/copyMessage`; 
+            // this.telegramApi භාවිතා කරයි
+            const copyMessageUrl = `${this.telegramApi}/copyMessage`; 
             
             for (let i = 0; i < totalUsers; i += BATCH_SIZE) {
                 const batch = userKeys.slice(i, i + BATCH_SIZE);
                 
                 const sendPromises = batch.map(async (userId) => {
-                    if (userId.toString() === OWNER_ID.toString()) return; 
+                    // OWNER_ID env එකෙන් ලබා ගනී
+                    if (userId.toString() === this.env.OWNER_ID.toString()) return; 
 
                     try {
                         const copyBody = {
