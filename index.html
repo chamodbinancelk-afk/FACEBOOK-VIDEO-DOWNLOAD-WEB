@@ -38,13 +38,7 @@
             border-color: #1e7e34;
             transform: translateY(-2px);
         }
-        .thumbnail-img {
-            max-width: 100%;
-            height: auto;
-            border-radius: 8px;
-            margin-bottom: 20px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
-        }
+        /* thumbnail-img class එක ඉවත් කර ඇත */
         .info-label {
             font-weight: 600;
             color: var(--primary-color);
@@ -65,8 +59,6 @@
         <div id="videoDetails" class="d-none">
             
             <h2 id="videoTitle" class="mt-2 mb-4 text-primary"></h2>
-
-            <img id="thumbnailImage" class="thumbnail-img d-none" alt="Video Thumbnail">
 
             <a id="downloadButton" href="#" class="btn btn-download text-white mt-4 mb-4" download>
                 Click to Download Video
@@ -125,7 +117,7 @@
         const encodedDuration = params.get('duration');
         const encodedViews = params.get('views');
         const encodedUploadDate = params.get('uploadDate');
-        const encodedThumbnailUrl = params.get('thumbnail'); // Thumbnail URL එක ලබා ගනී
+        // encodedThumbnailUrl ඉවත් කර ඇත
         
         const downloadButton = document.getElementById('downloadButton');
         const videoTitleElement = document.getElementById('videoTitle');
@@ -137,7 +129,7 @@
         const durationText = document.getElementById('durationText');
         const viewsText = document.getElementById('viewsText');
         const uploadDateText = document.getElementById('uploadDateText');
-        const thumbnailImage = document.getElementById('thumbnailImage'); // Thumbnail Image element
+        // thumbnailImage ඉවත් කර ඇත
         const pageTitle = document.getElementById('pageTitle');
 
         if (encodedUrl) {
@@ -149,13 +141,13 @@
                 const decodedViews = encodedViews ? parseInt(atob(encodedViews)).toLocaleString('en-US') : 'N/A';
                 
                 let decodedUploadDate = encodedUploadDate ? atob(encodedUploadDate) : 'N/A';
-                if (decodedUploadDate && /^\d{4}-\d{2}-\d{2}$/.test(decodedUploadDate)) { // 2025-11-19 format එකට අනුකූලදැයි පරීක්ෂා කරයි
-                     // දත්ත එම format එකේම තිබේ නම්, එය එලෙසම තබමු.
-                } else if (decodedUploadDate && /^\d{8}$/.test(decodedUploadDate)) { // 20251119 format එකේ නම්
+                if (decodedUploadDate && /^\d{4}-\d{2}-\d{2}$/.test(decodedUploadDate)) { 
+                     // Format OK
+                } else if (decodedUploadDate && /^\d{8}$/.test(decodedUploadDate)) { 
                     decodedUploadDate = decodedUploadDate.substring(0, 4) + '-' + decodedUploadDate.substring(4, 6) + '-' + decodedUploadDate.substring(6, 8);
                 }
 
-                const decodedThumbnailUrl = encodedThumbnailUrl ? atob(encodedThumbnailUrl) : ''; // Thumbnail URL Decode කරයි.
+                // decodedThumbnailUrl ඉවත් කර ඇත
 
                 loadingState.classList.add('d-none');
                 videoDetails.classList.remove('d-none');
@@ -171,13 +163,7 @@
                 viewsText.textContent = decodedViews;
                 uploadDateText.textContent = decodedUploadDate;
 
-                // Thumbnail URL එකක් තිබේ නම් එය පෙන්වයි
-                if (decodedThumbnailUrl && decodedThumbnailUrl !== 'N/A') {
-                    thumbnailImage.src = decodedThumbnailUrl;
-                    thumbnailImage.classList.remove('d-none');
-                } else {
-                    thumbnailImage.classList.add('d-none'); // Thumbnail නොමැතිනම් සඟවයි
-                }
+                // Thumbnail පෙන්වීමේ logic එක ඉවත් කර ඇත
 
             } catch (e) {
                 loadingState.classList.add('d-none');
@@ -187,7 +173,7 @@
             }
         } else {
             loadingState.classList.add('d-none');
-            videoDetails.classList.add('d-none'); // videoDetails කොටසත් සඟවමු
+            videoDetails.classList.add('d-none'); 
             errorState.textContent = "Please use the Telegram Bot to generate a valid download link.";
             errorState.classList.remove('d-none');
         }
