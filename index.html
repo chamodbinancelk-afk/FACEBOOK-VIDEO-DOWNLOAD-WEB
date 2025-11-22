@@ -31,17 +31,31 @@
             font-size: 1.5rem; 
             padding: 15px 40px; 
             border-radius: 50px; 
-            transition: background-color 0.3s, transform 0.3s; 
+            transition: background-color 0.3s ease;
         }
-        .btn-download:hover { 
-            background-color: #1e7e34; 
+        .btn-download:hover {
+            background-color: #218838;
             border-color: #1e7e34;
-            transform: translateY(-2px);
         }
-        /* thumbnail-img class එක ඉවත් කර ඇත */
-        .info-label {
-            font-weight: 600;
+        .logo-text {
             color: var(--primary-color);
+            font-weight: 700;
+        }
+        .status-badge {
+            font-size: 0.9rem;
+        }
+        .detail-row {
+            padding: 5px 0;
+            border-bottom: 1px solid #eee;
+        }
+        .detail-row:last-child {
+            border-bottom: none;
+        }
+        .thumb-img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 8px;
+            margin-bottom: 20px;
         }
     </style>
 </head>
@@ -50,120 +64,105 @@
 <div class="container">
     <div class="download-box text-center">
         
-        <h1 class="mb-4 text-dark fw-bold">⬇️ File Download Ready</h1>
+        <h1 class="mb-4">
+            <span class="logo-text">C D H Corporation</span> 
+            <small class="badge bg-success status-badge">File Downloader</small>
+        </h1>
         
-        <div id="loadingState" class="alert alert-info" role="alert">
-            Loading video details...
+        <div id="loadingState" class="mb-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-3 text-muted">Decoding link and preparing download...</p>
         </div>
-        
-        <div id="videoDetails" class="d-none">
-            
-            <h2 id="videoTitle" class="mt-2 mb-4 text-primary"></h2>
 
-            <a id="downloadButton" href="#" class="btn btn-download text-white mt-4 mb-4" download>
-                Click to Download Video
-            </a>
+        <div id="videoDetails" class="d-none"> 
             
-            <div class="row text-start mt-4 border rounded p-3 bg-light">
-                <div class="col-md-6 mb-2">
-                    <span class="info-label">👤 Uploader:</span> <span id="uploaderText">N/A</span>
-                </div>
-                <div class="col-md-6 mb-2">
-                    <span class="info-label">⏱️ Duration:</span> <span id="durationText">N/A</span>
-                </div>
-                <div class="col-md-6 mb-2">
-                    <span class="info-label">👁️ Views:</span> <span id="viewsText">N/A</span>
-                </div>
-                <div class="col-md-6 mb-2">
-                    <span class="info-label">📅 Uploaded:</span> <span id="uploadDateText">N/A</span>
-                </div>
+            <img id="thumbnailImage" class="thumb-img d-none" alt="Video Thumbnail">
+
+            <h2 id="videoTitle" class="mb-3 text-start">Video Title Placeholder</h2>
+            
+            <div class="text-start mb-4">
+                <div class="detail-row"><strong>👤 Uploader:</strong> <span id="uploaderText">N/A</span></div>
+                <div class="detail-row"><strong>⏱️ Duration:</strong> <span id="durationText">N/A</span></div>
+                <div class="detail-row"><strong>👁️ Views:</strong> <span id="viewsText">N/A</span></div>
+                <div class="detail-row"><strong>📅 Upload Date:</strong> <span id="uploadDateText">N/A</span></div>
             </div>
 
-            <p class="mt-3 text-muted small">
-                If the download doesn't start, please right-click the button and select "Save Link As..."
-            </p>
+            <a id="downloadButton" href="#" class="btn btn-download btn-block mt-4" role="button">
+                ⬇️ Download Video
+            </a>
+
+            <p class="mt-3 text-muted">Click the button to start the direct download.</p>
+        </div>
+
+        <div id="errorState" class="d-none alert alert-danger mt-4" role="alert">
+            ❌ Error: Could not load the download link.
         </div>
         
-        <div id="errorState" class="d-none alert alert-danger" role="alert">
-            ❌ Error: Invalid video link or required data is missing.
-        </div>
     </div>
-    
-    <footer class="text-center mt-4">
-        <p class="small text-muted mb-0">Powered by C D H Corporation © | Cloudflare Worker Bot</p>
-    </footer>
 </div>
 
 <script>
-    function formatDuration(seconds) {
-        if (typeof seconds !== 'number' || seconds < 0) return 'N/A';
-        const totalSeconds = Math.round(seconds); 
-        const h = Math.floor(totalSeconds / 3600);
-        const m = Math.floor((totalSeconds % 3600) / 60);
-        const s = totalSeconds % 60;
-        if (h > 0) {
-            return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-        } else {
-            return `${m}:${String(s).padStart(2, '0')}`;
-        }
-    }
-
-    document.addEventListener('DOMContentLoaded', function() {
+    document.addEventListener('DOMContentLoaded', () => {
         const params = new URLSearchParams(window.location.search);
+        const urlParam = params.get('url');
         
-        const encodedUrl = params.get('url');
-        const encodedTitle = params.get('title');
-        const encodedUploader = params.get('uploader');
-        const encodedDuration = params.get('duration');
-        const encodedViews = params.get('views');
-        const encodedUploadDate = params.get('uploadDate');
-        // encodedThumbnailUrl ඉවත් කර ඇත
-        
-        const downloadButton = document.getElementById('downloadButton');
-        const videoTitleElement = document.getElementById('videoTitle');
         const loadingState = document.getElementById('loadingState');
         const videoDetails = document.getElementById('videoDetails');
         const errorState = document.getElementById('errorState');
-        
+        const pageTitle = document.getElementById('pageTitle');
+        const videoTitle = document.getElementById('videoTitle');
+        const downloadButton = document.getElementById('downloadButton');
         const uploaderText = document.getElementById('uploaderText');
         const durationText = document.getElementById('durationText');
         const viewsText = document.getElementById('viewsText');
         const uploadDateText = document.getElementById('uploadDateText');
-        // thumbnailImage ඉවත් කර ඇත
-        const pageTitle = document.getElementById('pageTitle');
+        const thumbnailImage = document.getElementById('thumbnailImage');
 
-        if (encodedUrl) {
+        if (urlParam) {
             try {
-                const decodedUrl = atob(encodedUrl);
-                const decodedTitle = encodedTitle ? atob(encodedTitle) : 'Facebook Video';
-                const decodedUploader = encodedUploader ? atob(encodedUploader) : 'Unknown Uploader';
-                const decodedDuration = encodedDuration ? formatDuration(parseInt(atob(encodedDuration))) : 'N/A';
-                const decodedViews = encodedViews ? parseInt(atob(encodedViews)).toLocaleString('en-US') : 'N/A';
+                // Base64 decoding helper (Worker logic)
+                const decodeBase64 = (encoded) => {
+                    if (!encoded) return 'N/A';
+                    // atob() සහ decodeURIComponent(escape()) හරහා ආරක්ෂිතව decode කිරීම.
+                    return decodeURIComponent(escape(atob(encoded)));
+                };
+
+                const decodedUrl = decodeBase64(urlParam);
+                const decodedTitle = decodeBase64(params.get('title'));
+                const decodedUploader = decodeBase64(params.get('uploader'));
+                const decodedDuration = decodeBase64(params.get('duration'));
+                const decodedViews = decodeBase64(params.get('views'));
+                const decodedUploadDate = decodeBase64(params.get('date'));
                 
-                let decodedUploadDate = encodedUploadDate ? atob(encodedUploadDate) : 'N/A';
-                if (decodedUploadDate && /^\d{4}-\d{2}-\d{2}$/.test(decodedUploadDate)) { 
-                     // Format OK
-                } else if (decodedUploadDate && /^\d{8}$/.test(decodedUploadDate)) { 
-                    decodedUploadDate = decodedUploadDate.substring(0, 4) + '-' + decodedUploadDate.substring(4, 6) + '-' + decodedUploadDate.substring(6, 8);
-                }
+                // Thumbnail URL එකත් decode කරගනී (API data එකේ තිබුනේ නම්)
+                const decodedThumbnailUrl = decodeBase64(params.get('thumbnail')); 
 
-                // decodedThumbnailUrl ඉවත් කර ඇත
-
+                // Loading screen එක සඟවා, Details පෙන්වයි
                 loadingState.classList.add('d-none');
                 videoDetails.classList.remove('d-none');
                 
-                videoTitleElement.textContent = decodedTitle;
+                videoTitle.textContent = decodedTitle;
                 pageTitle.textContent = `Download: ${decodedTitle}`;
                 
+                // බාගත කිරීමේ බොත්තම සකස් කිරීම
                 downloadButton.href = decodedUrl;
                 downloadButton.download = decodedTitle.replace(/[^a-z0-9]/gi, '_') + '.mp4'; 
 
+                // අනෙකුත් විස්තර පිරවීම
                 uploaderText.textContent = decodedUploader;
                 durationText.textContent = decodedDuration;
                 viewsText.textContent = decodedViews;
                 uploadDateText.textContent = decodedUploadDate;
 
-                // Thumbnail පෙන්වීමේ logic එක ඉවත් කර ඇත
+                // Thumbnail URL එකක් තිබේ නම් එය පෙන්වයි
+                if (decodedThumbnailUrl && decodedThumbnailUrl !== 'N/A') {
+                    thumbnailImage.src = decodedThumbnailUrl;
+                    thumbnailImage.classList.remove('d-none');
+                } else {
+                    thumbnailImage.classList.add('d-none'); // Thumbnail නොමැතිනම් සඟවයි
+                }
 
             } catch (e) {
                 loadingState.classList.add('d-none');
@@ -172,6 +171,7 @@
                 console.error("Decoding error:", e);
             }
         } else {
+            // URL එකේ parameters නොමැති නම් error පෙන්වයි
             loadingState.classList.add('d-none');
             videoDetails.classList.add('d-none'); 
             errorState.textContent = "Please use the Telegram Bot to generate a valid download link.";
