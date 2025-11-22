@@ -41,7 +41,6 @@ export default {
 
                 ctx.waitUntil(handlers.saveUserId(chatId));
 
-                // --- Admin/Broadcast Logic ---
                 if (isOwner && message.reply_to_message) {
                     const repliedMessage = message.reply_to_message;
                     
